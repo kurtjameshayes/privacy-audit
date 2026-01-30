@@ -16,7 +16,9 @@ FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
 POLICY_DATABASE = os.getenv("POLICY_DATABASE", "privacy_audit")
 POLICY_COLLECTION = os.getenv("POLICY_COLLECTION", "policies")
 
-app = Flask(__name__, static_folder="../frontend/dist", static_url_path="/")
+STATIC_FOLDER = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+
+app = Flask(__name__, static_folder=None)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 
@@ -145,14 +147,14 @@ def save_policy() -> Any:
 
 @app.route("/")
 def serve_index() -> Any:
-    return send_from_directory(app.static_folder, "index.html")
+    return send_from_directory(STATIC_FOLDER, "index.html")
 
 
 @app.errorhandler(404)
 def fallback(error: Any) -> Any:
     if request.path.startswith("/api/"):
         return jsonify({"error": "Not found"}), 404
-    return send_from_directory(app.static_folder, "index.html")
+    return send_from_directory(STATIC_FOLDER, "index.html")
 
 
 if __name__ == "__main__":
