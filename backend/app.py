@@ -147,14 +147,42 @@ def save_policy() -> Any:
 
 @app.route("/")
 def serve_index() -> Any:
+    index_path = os.path.join(STATIC_FOLDER, "index.html")
+    if not os.path.isfile(index_path):
+        return jsonify({
+            "error": "Frontend not built. Run 'npm run build' in the frontend directory.",
+            "hint": "The frontend/dist directory does not exist or is missing index.html"
+        }), 503
     return send_from_directory(STATIC_FOLDER, "index.html")
+
+
+@app.route("/<path:path>")
+def serve_static(path: str) -> Any:
+    if path.startswith("api/"):
+        return jsonify({"error": "Not found"}), 404
+    file_path = os.path.join(STATIC_FOLDER, path)
+    if os.path.isfile(file_path):
+        return send_from_directory(STATIC_FOLDER, path)
+    index_path = os.path.join(STATIC_FOLDER, "index.html")
+    if os.path.isfile(index_path):
+        return send_from_directory(STATIC_FOLDER, "index.html")
+    return jsonify({
+        "error": "Frontend not built. Run 'npm run build' in the frontend directory.",
+        "hint": "The frontend/dist directory does not exist or is missing index.html"
+    }), 503
 
 
 @app.errorhandler(404)
 def fallback(error: Any) -> Any:
     if request.path.startswith("/api/"):
         return jsonify({"error": "Not found"}), 404
-    return send_from_directory(STATIC_FOLDER, "index.html")
+    index_path = os.path.join(STATIC_FOLDER, "index.html")
+    if os.path.isfile(index_path):
+        return send_from_directory(STATIC_FOLDER, "index.html")
+    return jsonify({
+        "error": "Frontend not built. Run 'npm run build' in the frontend directory.",
+        "hint": "The frontend/dist directory does not exist or is missing index.html"
+    }), 503
 
 
 if __name__ == "__main__":
