@@ -115,6 +115,18 @@ export default function App() {
     "As long as necessary.",
     "We reserve the right to change this policy at any time.",
   ].join(" ");
+  const statuteSearchPhrases = [
+    "Identified or identifiable natural person",
+    "Right to opt out of the sale of personal information",
+    "Right to access, correct, and delete",
+    "Determines the purposes and means of processing",
+    "Processes personal data on behalf of a controller",
+    "Reasonably necessary and proportionate",
+    "De-identified data or aggregate consumer information",
+    "Decisions that produce legal or similarly significant effects",
+    "Specific, informed, and unambiguous consent",
+    "Consumer request that is verifiable",
+  ].join(" ");
 
   const searchQuery = useMemo(() => {
     if (!trimmedQuery) {
@@ -125,8 +137,8 @@ export default function App() {
         ? trimmedQuery
         : `${trimmedQuery} ${policySearchPhrases}`;
     }
-    return trimmedQuery;
-  }, [mode, policySearchPhrases, trimmedQuery]);
+    return `${trimmedQuery} ${statuteSearchPhrases}`;
+  }, [mode, policySearchPhrases, statuteSearchPhrases, trimmedQuery]);
 
   const handleSearch = async () => {
     if (!trimmedQuery) {
