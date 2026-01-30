@@ -13,7 +13,7 @@ load_dotenv()
 
 API_BASE_URL = os.getenv("GATHER_API_BASE_URL", "").strip()
 FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
-POLICY_DATABASE = os.getenv("POLICY_DATABASE", "privacy_audit")
+POLICY_DATABASE = os.getenv("POLICY_DATABASE", "privacy-compliance")
 POLICY_COLLECTION = os.getenv("POLICY_COLLECTION", "policies")
 
 STATIC_FOLDER = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
