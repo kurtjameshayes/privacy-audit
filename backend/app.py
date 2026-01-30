@@ -16,6 +16,7 @@ FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
 PROXY_URL = os.getenv("PROXY_URL", "").strip()
 POLICY_DATABASE = os.getenv("POLICY_DATABASE", "privacy-compliance")
 POLICY_COLLECTION = os.getenv("POLICY_COLLECTION", "policies")
+STATUTE_COLLECTION = os.getenv("STATUTE_COLLECTION", "statutes")
 
 STATIC_FOLDER = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 
@@ -115,6 +116,9 @@ def save_policy() -> Any:
     if not url or not combined_text:
         return jsonify({"error": "URL and combined_text are required."}), 400
 
+    mode = payload.get("mode", "policy")
+    collection_name = STATUTE_COLLECTION if mode == "statute" else POLICY_COLLECTION
+
     document = {
         "source_url": url,
         "title": payload.get("title"),
@@ -123,7 +127,7 @@ def save_policy() -> Any:
         "query": payload.get("query"),
         "pages_crawled": payload.get("pages_crawled"),
         "text_length": payload.get("text_length"),
-        "mode": payload.get("mode", "policy"),
+        "mode": mode,
         "gathered_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -131,7 +135,7 @@ def save_policy() -> Any:
         "/write_to_collection",
         {
             "database_name": POLICY_DATABASE,
-            "collection_name": POLICY_COLLECTION,
+            "collection_name": collection_name,
             "document": document,
             "mode": "append",
         },
@@ -141,7 +145,7 @@ def save_policy() -> Any:
         message, status = error
         return jsonify({"error": message}), status
 
-    message = "Saved to policy collection."
+    message = f"Saved to {mode} collection."
     if isinstance(data, dict) and data.get("message"):
         message = data["message"]
     return jsonify({"message": message, "data": data})
