@@ -157,7 +157,7 @@ def serve_index() -> Any:
 
 
 @app.errorhandler(404)
-def fallback(error: Any) -> Any:
+def handle_404(error: Any) -> Any:
     if request.path.startswith("/api/"):
         return jsonify({"error": "Not found"}), 404
     index_path = os.path.join(STATIC_FOLDER, "index.html")
@@ -167,6 +167,13 @@ def fallback(error: Any) -> Any:
         "error": "Frontend not built. Run 'npm run build' in the frontend directory.",
         "hint": "The frontend/dist directory does not exist or is missing index.html"
     }), 503
+
+
+@app.errorhandler(405)
+def handle_405(error: Any) -> Any:
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Method not allowed"}), 405
+    return error
 
 
 if __name__ == "__main__":
