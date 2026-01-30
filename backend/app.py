@@ -156,24 +156,6 @@ def serve_index() -> Any:
     return send_from_directory(STATIC_FOLDER, "index.html")
 
 
-@app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
-def serve_static(path: str) -> Any:
-    if path.startswith("api/"):
-        return jsonify({"error": "Not found"}), 404
-    if request.method != "GET":
-        return jsonify({"error": "Method not allowed"}), 405
-    file_path = os.path.join(STATIC_FOLDER, path)
-    if os.path.isfile(file_path):
-        return send_from_directory(STATIC_FOLDER, path)
-    index_path = os.path.join(STATIC_FOLDER, "index.html")
-    if os.path.isfile(index_path):
-        return send_from_directory(STATIC_FOLDER, "index.html")
-    return jsonify({
-        "error": "Frontend not built. Run 'npm run build' in the frontend directory.",
-        "hint": "The frontend/dist directory does not exist or is missing index.html"
-    }), 503
-
-
 @app.errorhandler(404)
 def fallback(error: Any) -> Any:
     if request.path.startswith("/api/"):
