@@ -83,6 +83,25 @@ export default function App() {
   const [isCrawling, setIsCrawling] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [errorCopied, setErrorCopied] = useState(false);
+
+  const copyErrorToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setErrorCopied(true);
+      setTimeout(() => setErrorCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+      setErrorCopied(true);
+      setTimeout(() => setErrorCopied(false), 2000);
+    }
+  };
 
   const trimmedQuery = query.trim();
   const searchQuery = useMemo(() => {
@@ -331,7 +350,46 @@ export default function App() {
                   {isSearching ? "Searching…" : "Gather results"}
                 </button>
               </div>
-              {error ? <p className="error-banner">{error}</p> : null}
+              {error ? (
+                <div className="error-banner">
+                  <span className="error-text">{error}</span>
+                  <button
+                    type="button"
+                    className="error-copy-button"
+                    onClick={() => copyErrorToClipboard(error)}
+                    title={errorCopied ? "Copied!" : "Copy error"}
+                  >
+                    {errorCopied ? (
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    ) : (
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div className="context-block">
               <p className="context-title">Workflow notes</p>
