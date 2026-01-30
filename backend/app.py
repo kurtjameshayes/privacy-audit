@@ -147,12 +147,18 @@ def save_policy() -> Any:
 
 @app.route("/")
 def serve_index() -> Any:
+    index_path = os.path.join(STATIC_FOLDER, "index.html")
+    if not os.path.isfile(index_path):
+        return jsonify({"error": "Frontend not built. Run 'npm run build' in frontend/"}), 503
     return send_from_directory(STATIC_FOLDER, "index.html")
 
 
 @app.errorhandler(404)
 def fallback(error: Any) -> Any:
     if request.path.startswith("/api/"):
+        return jsonify({"error": "Not found"}), 404
+    index_path = os.path.join(STATIC_FOLDER, "index.html")
+    if not os.path.isfile(index_path):
         return jsonify({"error": "Not found"}), 404
     return send_from_directory(STATIC_FOLDER, "index.html")
 
