@@ -502,7 +502,7 @@ export default function App() {
                   className="primary-button"
                   type="button"
                   onClick={handleSave}
-                  disabled={isSaving || isCrawling || mode !== "policy"}
+                  disabled={isSaving || isCrawling}
                 >
                   {isSaving ? "Saving…" : "Save"}
                 </button>
