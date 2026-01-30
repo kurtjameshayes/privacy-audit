@@ -104,6 +104,30 @@ export default function App() {
   };
 
   const trimmedQuery = query.trim();
+  const policySearchPhrases = [
+    "Privacy Policy",
+    "Your privacy is important to us.",
+    "We are committed to protecting your personal information.",
+    "Information we collect.",
+    "Commercially acceptable means.",
+    "We do not sell your personal information.",
+    "Third-party service providers.",
+    "As long as necessary.",
+    "We reserve the right to change this policy at any time.",
+  ].join(" ");
+  const statuteSearchPhrases = [
+    "Identified or identifiable natural person",
+    "Right to opt out of the sale of personal information",
+    "Right to access, correct, and delete",
+    "Determines the purposes and means of processing",
+    "Processes personal data on behalf of a controller",
+    "Reasonably necessary and proportionate",
+    "De-identified data or aggregate consumer information",
+    "Decisions that produce legal or similarly significant effects",
+    "Specific, informed, and unambiguous consent",
+    "Consumer request that is verifiable",
+  ].join(" ");
+
   const searchQuery = useMemo(() => {
     if (!trimmedQuery) {
       return "";
@@ -111,10 +135,10 @@ export default function App() {
     if (mode === "policy") {
       return trimmedQuery.toLowerCase().includes("privacy policy")
         ? trimmedQuery
-        : `${trimmedQuery} Privacy Policy`;
+        : `${trimmedQuery} ${policySearchPhrases}`;
     }
-    return trimmedQuery;
-  }, [mode, trimmedQuery]);
+    return `${trimmedQuery} ${statuteSearchPhrases}`;
+  }, [mode, policySearchPhrases, statuteSearchPhrases, trimmedQuery]);
 
   const handleSearch = async () => {
     if (!trimmedQuery) {
