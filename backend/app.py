@@ -52,12 +52,12 @@ def forward_post(endpoint: str, payload: dict[str, Any]) -> Tuple[Any, Tuple[str
         return {"raw": response.text}, None
 
 
-@app.get("/api/health")
+@app.route("/api/health", methods=["GET"])
 def health() -> Any:
     return jsonify({"status": "ok"})
 
 
-@app.post("/api/gather")
+@app.route("/api/gather", methods=["POST"])
 def gather() -> Any:
     payload = request.get_json(silent=True) or {}
     query = str(payload.get("query", "")).strip()
@@ -71,7 +71,7 @@ def gather() -> Any:
     return jsonify(data)
 
 
-@app.post("/api/crawl")
+@app.route("/api/crawl", methods=["POST"])
 def crawl() -> Any:
     payload = request.get_json(silent=True) or {}
     url = str(payload.get("url", "")).strip()
@@ -102,7 +102,7 @@ def crawl() -> Any:
     return jsonify(data)
 
 
-@app.post("/api/save-policy")
+@app.route("/api/save-policy", methods=["POST"])
 def save_policy() -> Any:
     payload = request.get_json(silent=True) or {}
     url = str(payload.get("url", "")).strip()
