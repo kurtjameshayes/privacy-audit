@@ -13,6 +13,7 @@ load_dotenv()
 
 API_BASE_URL = os.getenv("GATHER_API_BASE_URL", "").strip()
 FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
+PROXY_URL = os.getenv("PROXY_URL", "").strip()
 POLICY_DATABASE = os.getenv("POLICY_DATABASE", "privacy-compliance")
 POLICY_COLLECTION = os.getenv("POLICY_COLLECTION", "policies")
 
@@ -90,14 +91,15 @@ def crawl() -> Any:
     depth = normalize_int(payload.get("depth"), 1)
     breadth = normalize_int(payload.get("breadth"), 1)
 
-    data, error = forward_post(
-        "/crawl",
-        {
-            "url": url,
-            "depth": depth,
-            "breadth": breadth,
-        },
-    )
+    crawl_payload: dict[str, Any] = {
+        "url": url,
+        "depth": depth,
+        "breadth": breadth,
+    }
+    if PROXY_URL:
+        crawl_payload["proxy"] = PROXY_URL
+
+    data, error = forward_post("/crawl", crawl_payload)
     if error:
         message, status = error
         return jsonify({"error": message}), status
