@@ -156,10 +156,12 @@ def serve_index() -> Any:
     return send_from_directory(STATIC_FOLDER, "index.html")
 
 
-@app.route("/<path:path>")
+@app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 def serve_static(path: str) -> Any:
     if path.startswith("api/"):
         return jsonify({"error": "Not found"}), 404
+    if request.method != "GET":
+        return jsonify({"error": "Method not allowed"}), 405
     file_path = os.path.join(STATIC_FOLDER, path)
     if os.path.isfile(file_path):
         return send_from_directory(STATIC_FOLDER, path)
