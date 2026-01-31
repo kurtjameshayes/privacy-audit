@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import os
 from typing import Any, Tuple
 
@@ -10,6 +11,8 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 load_dotenv()
+
+APP_PROMPTS_FOLDER = os.path.join(os.path.dirname(__file__), "..", "app_prompts")
 
 API_BASE_URL = os.getenv("GATHER_API_BASE_URL", "").strip()
 FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
@@ -59,6 +62,23 @@ def forward_post(endpoint: str, payload: dict[str, Any]) -> Tuple[Any, Tuple[str
 @app.route("/api/health", methods=["GET"])
 def health() -> Any:
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/config/privacy-policy-search", methods=["GET"])
+def get_privacy_policy_search_config() -> Any:
+    config_path = os.path.join(APP_PROMPTS_FOLDER, "privacy_policy_search.json")
+    if not os.path.isfile(config_path):
+        return jsonify({
+            "module": "search_policy",
+            "append_prompt": "Privacy Policy full text",
+            "prepend_prompt": ""
+        })
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        return jsonify(config)
+    except (json.JSONDecodeError, IOError) as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/gather", methods=["POST"])
@@ -119,12 +139,15 @@ def save_policy() -> Any:
     mode = str(payload.get("mode") or "policy").strip()
     collection_name = STATUTE_COLLECTION if mode == "statute" else POLICY_COLLECTION
 
+    company_name = str(payload.get("company_name", "")).strip() or None
+
     document = {
         "source_url": url,
         "title": payload.get("title"),
         "description": payload.get("description"),
         "text": combined_text,
         "query": payload.get("query"),
+        "company_name": company_name,
         "pages_crawled": payload.get("pages_crawled"),
         "text_length": payload.get("text_length"),
         "mode": mode,
@@ -144,6 +167,23 @@ def save_policy() -> Any:
     if error:
         message, status = error
         return jsonify({"error": message}), status
+
+    # Also save to companies collection if company_name is provided
+    if company_name:
+        company_document = {
+            "company_name": company_name,
+            "privacy_policy_url": url,
+            "added_at": datetime.now(timezone.utc).isoformat(),
+        }
+        forward_post(
+            "/write_to_collection",
+            {
+                "database_name": POLICY_DATABASE,
+                "collection_name": "companies",
+                "document": company_document,
+                "mode": "append",
+            },
+        )
 
     message = f"Saved to {mode} collection."
     if isinstance(data, dict) and data.get("message"):

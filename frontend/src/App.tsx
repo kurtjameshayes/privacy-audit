@@ -1,6 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type GatherMode = "policy" | "statute";
+
+interface PolicySearchConfig {
+  module: string;
+  append_prompt: string;
+  prepend_prompt: string;
+}
 
 interface GatherResult {
   title: string;
@@ -84,6 +90,10 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [errorCopied, setErrorCopied] = useState(false);
+  const [policySearchConfig, setPolicySearchConfig] =
+    useState<PolicySearchConfig | null>(null);
+  const [showCompanyNameDialog, setShowCompanyNameDialog] = useState(false);
+  const [companyName, setCompanyName] = useState("");
 
   const copyErrorToClipboard = async (text: string) => {
     try {
@@ -103,18 +113,22 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const response = await fetch("/api/config/privacy-policy-search");
+        if (response.ok) {
+          const config = (await response.json()) as PolicySearchConfig;
+          setPolicySearchConfig(config);
+        }
+      } catch {
+        // Use default config if fetch fails
+      }
+    };
+    fetchConfig();
+  }, []);
+
   const trimmedQuery = query.trim();
-  const policySearchPhrases = [
-    "Privacy Policy",
-    "Your privacy is important to us.",
-    "We are committed to protecting your personal information.",
-    "Information we collect.",
-    "Commercially acceptable means.",
-    "We do not sell your personal information.",
-    "Third-party service providers.",
-    "As long as necessary.",
-    "We reserve the right to change this policy at any time.",
-  ].join(" ");
   const statuteSearchPhrases = [
     "Identified or identifiable natural person",
     "Right to opt out of the sale of personal information",
@@ -133,12 +147,13 @@ export default function App() {
       return "";
     }
     if (mode === "policy") {
-      return trimmedQuery.toLowerCase().includes("privacy policy")
-        ? trimmedQuery
-        : `${trimmedQuery} ${policySearchPhrases}`;
+      const prepend = policySearchConfig?.prepend_prompt || "";
+      const append = policySearchConfig?.append_prompt || "Privacy Policy full text";
+      const parts = [prepend, trimmedQuery, append].filter(Boolean);
+      return parts.join(" ");
     }
     return `${trimmedQuery} ${statuteSearchPhrases}`;
-  }, [mode, policySearchPhrases, statuteSearchPhrases, trimmedQuery]);
+  }, [mode, policySearchConfig, statuteSearchPhrases, trimmedQuery]);
 
   const handleSearch = async () => {
     if (!trimmedQuery) {
@@ -217,11 +232,21 @@ export default function App() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSaveClick = () => {
+    if (!crawlData || !selectedResult) {
+      return;
+    }
+    // Default company name to the user's search query (trimmed)
+    setCompanyName(trimmedQuery);
+    setShowCompanyNameDialog(true);
+  };
+
+  const handleConfirmSave = async () => {
     if (!crawlData || !selectedResult) {
       return;
     }
 
+    setShowCompanyNameDialog(false);
     setIsSaving(true);
     setSaveMessage(null);
 
@@ -239,6 +264,7 @@ export default function App() {
           pages_crawled: crawlData.pages_crawled,
           text_length: crawlData.text_length,
           query: lastQuery || searchQuery,
+          company_name: companyName.trim(),
           mode,
         }),
       });
@@ -257,6 +283,10 @@ export default function App() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleCancelSave = () => {
+    setShowCompanyNameDialog(false);
   };
 
   const closeModal = () => {
@@ -501,7 +531,7 @@ export default function App() {
                 <button
                   className="primary-button"
                   type="button"
-                  onClick={handleSave}
+                  onClick={handleSaveClick}
                   disabled={isSaving || isCrawling}
                 >
                   {isSaving ? "Saving…" : "Save"}
@@ -535,6 +565,53 @@ export default function App() {
             {saveMessage ? (
               <div className="modal-footer">{saveMessage}</div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {showCompanyNameDialog ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card company-name-dialog">
+            <div className="modal-header">
+              <div>
+                <p className="modal-title">Confirm Company Name</p>
+                <p className="modal-subtitle">
+                  Please verify the company name before saving.
+                </p>
+              </div>
+            </div>
+            <div className="modal-body">
+              <div className="field-group">
+                <label className="field-label" htmlFor="company-name">
+                  Company Name
+                </label>
+                <input
+                  id="company-name"
+                  type="text"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  placeholder="Enter company name"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="modal-actions dialog-actions">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={handleCancelSave}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={handleConfirmSave}
+                disabled={!companyName.trim()}
+              >
+                Save Policy
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
