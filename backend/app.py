@@ -14,9 +14,9 @@ load_dotenv()
 API_BASE_URL = os.getenv("GATHER_API_BASE_URL", "").strip()
 FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
 PROXY_URL = os.getenv("PROXY_URL", "").strip()
-POLICY_DATABASE = os.getenv("POLICY_DATABASE", "privacy-compliance")
-POLICY_COLLECTION = os.getenv("POLICY_COLLECTION", "policies")
-STATUTE_COLLECTION = os.getenv("STATUTE_COLLECTION", "statutes")
+POLICY_DATABASE = os.getenv("POLICY_DATABASE") or "privacy-compliance"
+POLICY_COLLECTION = os.getenv("POLICY_COLLECTION") or "policies"
+STATUTE_COLLECTION = os.getenv("STATUTE_COLLECTION") or "statutes"
 
 STATIC_FOLDER = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 
@@ -116,7 +116,7 @@ def save_policy() -> Any:
     if not url or not combined_text:
         return jsonify({"error": "URL and combined_text are required."}), 400
 
-    mode = payload.get("mode", "policy")
+    mode = str(payload.get("mode") or "policy").strip()
     collection_name = STATUTE_COLLECTION if mode == "statute" else POLICY_COLLECTION
 
     document = {
