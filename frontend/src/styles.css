@@ -667,3 +667,36 @@ textarea:focus {
   justify-content: flex-end;
   gap: 10px;
 }
+
+/* Save confirmation dialog */
+.save-confirmation-dialog {
+  width: min(420px, 100%);
+  max-height: auto;
+}
+
+.save-confirmation-dialog .modal-header {
+  border-bottom: none;
+  padding-bottom: 8px;
+}
+
+.save-confirmation-dialog .modal-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+
+.save-confirmation-dialog .modal-subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--slate);
+  line-height: 1.5;
+}
+
+.save-confirmation-dialog .dialog-actions {
+  border-top: none;
+  justify-content: center;
+  padding-top: 8px;
+}

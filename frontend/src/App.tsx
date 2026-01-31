@@ -94,6 +94,7 @@ export default function App() {
     useState<PolicySearchConfig | null>(null);
   const [showCompanyNameDialog, setShowCompanyNameDialog] = useState(false);
   const [companyName, setCompanyName] = useState("");
+  const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
 
   const copyErrorToClipboard = async (text: string) => {
     try {
@@ -276,6 +277,7 @@ export default function App() {
 
       const data = (await response.json()) as { message?: string };
       setSaveMessage(data.message || "Saved to policy collection.");
+      setShowSaveConfirmation(true);
     } catch (caught) {
       const message =
         caught instanceof Error ? caught.message : "Unable to save policy.";
@@ -287,6 +289,13 @@ export default function App() {
 
   const handleCancelSave = () => {
     setShowCompanyNameDialog(false);
+  };
+
+  const handleSaveConfirmationOk = () => {
+    setShowSaveConfirmation(false);
+    setSelectedResult(null);
+    setCrawlData(null);
+    setSaveMessage(null);
   };
 
   const closeModal = () => {
@@ -610,6 +619,31 @@ export default function App() {
                 disabled={!companyName.trim()}
               >
                 Save Policy
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showSaveConfirmation ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card save-confirmation-dialog">
+            <div className="modal-header">
+              <div>
+                <p className="modal-title">Saved Successfully</p>
+                <p className="modal-subtitle">
+                  {saveMessage || "The policy has been saved to the collection."}
+                </p>
+              </div>
+            </div>
+            <div className="modal-actions dialog-actions">
+              <button
+                className="primary-button"
+                type="button"
+                onClick={handleSaveConfirmationOk}
+                autoFocus
+              >
+                OK
               </button>
             </div>
           </div>
