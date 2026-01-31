@@ -168,6 +168,23 @@ def save_policy() -> Any:
         message, status = error
         return jsonify({"error": message}), status
 
+    # Also save to companies collection if company_name is provided
+    if company_name:
+        company_document = {
+            "company_name": company_name,
+            "privacy_policy_url": url,
+            "added_at": datetime.now(timezone.utc).isoformat(),
+        }
+        forward_post(
+            "/write_to_collection",
+            {
+                "database_name": POLICY_DATABASE,
+                "collection_name": "companies",
+                "document": company_document,
+                "mode": "append",
+            },
+        )
+
     message = f"Saved to {mode} collection."
     if isinstance(data, dict) and data.get("message"):
         message = data["message"]
