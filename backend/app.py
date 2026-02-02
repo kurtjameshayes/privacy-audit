@@ -59,6 +59,35 @@ def forward_post(endpoint: str, payload: dict[str, Any]) -> Tuple[Any, Tuple[str
         return {"raw": response.text}, None
 
 
+def forward_get(
+    endpoint: str, params: dict[str, Any]
+) -> Tuple[Any, Tuple[str, int] | None]:
+    if not API_BASE_URL:
+        return None, ("GATHER_API_BASE_URL is not set.", 500)
+    if not FIRECRAWL_API_KEY:
+        return None, ("FIRECRAWL_API_KEY is not set.", 500)
+
+    url = f"{API_BASE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
+    try:
+        response = requests.get(
+            url, params=params, headers=api_headers(), timeout=60
+        )
+    except requests.RequestException as exc:
+        return None, (str(exc), 502)
+
+    if response.status_code >= 400:
+        try:
+            message = response.json().get("error", response.text)
+        except ValueError:
+            message = response.text
+        return None, (message, response.status_code)
+
+    try:
+        return response.json(), None
+    except ValueError:
+        return {"raw": response.text}, None
+
+
 @app.route("/api/health", methods=["GET"])
 def health() -> Any:
     return jsonify({"status": "ok"})
@@ -203,7 +232,7 @@ def list_documents() -> Any:
             "error": "database_name and collection_name are required."
         }), 400
 
-    data, error = forward_post(
+    data, error = forward_get(
         "/documents",
         {
             "database_name": database_name,
