@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 type GatherMode = "policy" | "statute";
+type ViewMode = "gather" | "list";
 
 interface PolicySearchConfig {
   module: string;
@@ -29,6 +30,20 @@ interface CrawlResponse {
   breadth: number;
   depth: number;
   urls_crawled?: string[];
+}
+
+interface DocumentRecord {
+  source_url?: string;
+  title?: string;
+  description?: string;
+  text?: string;
+  query?: string;
+  company_name?: string;
+  pages_crawled?: number;
+  text_length?: number;
+  mode?: string;
+  gathered_at?: string;
+  [key: string]: unknown;
 }
 
 const modeContent: Record<
@@ -75,7 +90,50 @@ const formatScore = (value: number) => {
   return value.toFixed(2);
 };
 
+const toDisplayString = (value: unknown) => {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).trim();
+};
+
+const formatDate = (value?: string) => {
+  if (!value) {
+    return "—";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+};
+
+const parseDocumentResponse = (data: unknown): DocumentRecord[] => {
+  if (Array.isArray(data)) {
+    return data as DocumentRecord[];
+  }
+  if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    const candidates = [
+      record.documents,
+      record.data,
+      record.results,
+      record.items,
+    ];
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) {
+        return candidate as DocumentRecord[];
+      }
+    }
+  }
+  return [];
+};
+
 export default function App() {
+  const [view, setView] = useState<ViewMode>("gather");
   const [mode, setMode] = useState<GatherMode>("policy");
   const [query, setQuery] = useState("");
   const [lastQuery, setLastQuery] = useState("");
@@ -95,6 +153,11 @@ export default function App() {
   const [showCompanyNameDialog, setShowCompanyNameDialog] = useState(false);
   const [companyName, setCompanyName] = useState("");
   const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
+  const [listMode, setListMode] = useState<GatherMode>("policy");
+  const [documentSearch, setDocumentSearch] = useState("");
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
 
   const copyErrorToClipboard = async (text: string) => {
     try {
@@ -128,6 +191,14 @@ export default function App() {
     };
     fetchConfig();
   }, []);
+
+  useEffect(() => {
+    if (view === "list") {
+      setSelectedResult(null);
+      setCrawlData(null);
+      setSaveMessage(null);
+    }
+  }, [view]);
 
   const trimmedQuery = query.trim();
   const statuteAppendPrompt = "Privacy Statute Law full text";
@@ -182,6 +253,40 @@ export default function App() {
       setError(message);
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  const handleDocumentsFetch = async (targetMode: GatherMode) => {
+    setIsLoadingDocuments(true);
+    setDocumentsError(null);
+    setDocuments([]);
+
+    try {
+      const response = await fetch("/api/documents", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          database_name: "privacy-compliance",
+          collection_name: targetMode === "policy" ? "policies" : "statutes",
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || "Unable to load documents.");
+      }
+
+      const data = (await response.json()) as unknown;
+      const parsed = parseDocumentResponse(data);
+      setDocuments(parsed);
+    } catch (caught) {
+      const message =
+        caught instanceof Error ? caught.message : "Unable to load documents.";
+      setDocumentsError(message);
+    } finally {
+      setIsLoadingDocuments(false);
     }
   };
 
@@ -293,6 +398,34 @@ export default function App() {
     setSaveMessage(null);
   };
 
+  useEffect(() => {
+    if (view !== "list") {
+      return;
+    }
+    void handleDocumentsFetch(listMode);
+  }, [listMode, view]);
+
+  const filteredDocuments = useMemo(() => {
+    const search = documentSearch.trim().toLowerCase();
+    if (!search) {
+      return documents;
+    }
+    return documents.filter((doc) => {
+      const haystack = [
+        doc.title,
+        doc.company_name,
+        doc.description,
+        doc.source_url,
+        doc.query,
+        doc.text,
+      ]
+        .map(toDisplayString)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(search);
+    });
+  }, [documentSearch, documents]);
+
   return (
     <div className="app-shell">
       <aside className="brand-column">
@@ -320,95 +453,297 @@ export default function App() {
             <span className="metric-value">Ready for ingestion</span>
           </div>
         </div>
+        <nav className="side-nav">
+          <p className="side-nav-title">Navigation</p>
+          <button
+            type="button"
+            className={`side-nav-item ${view === "gather" ? "is-active" : ""}`}
+            onClick={() => setView("gather")}
+          >
+            Gather Policies and Statutes
+          </button>
+          <button
+            type="button"
+            className={`side-nav-item ${view === "list" ? "is-active" : ""}`}
+            onClick={() => setView("list")}
+          >
+            List Policies and Statutes
+          </button>
+        </nav>
       </aside>
 
       <main className="main-panel">
-        <header className="main-header">
-          <div>
-            <p className="eyebrow">Gather</p>
-            <h2>Find policies and statutes with purpose-built search</h2>
-            <p className="subtitle">
-              Use prompt-driven discovery to collect full-text privacy
-              documents. Every result can be crawled, reviewed, and appended to
-              your policy collection.
-            </p>
-          </div>
-          <div className="header-card">
-            <p className="header-card-title">Active pipeline</p>
-            <p className="header-card-value">
-              {results.length ? results.length : "—"}
-            </p>
-            <p className="header-card-caption">
-              Results staged for review
-            </p>
-          </div>
-        </header>
-
-        <section className="gather-panel">
-          <div className="panel-header">
-            <div>
-              <p className="panel-title">Gather sources</p>
-              <p className="panel-subtitle">{modeContent[mode].headline}</p>
-            </div>
-            <div className="mode-toggle">
-              {(["policy", "statute"] as GatherMode[]).map((item) => (
-                <button
-                  key={item}
-                  className={`mode-button ${
-                    mode === item ? "is-active" : ""
-                  }`}
-                  type="button"
-                  onClick={() => {
-                    setMode(item);
-                    setQuery("");
-                    setResults([]);
-                    setError(null);
-                  }}
-                >
-                  {modeContent[item].label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="panel-body">
-            <div className="search-block">
-              <label className="field-label" htmlFor="query">
-                Search prompt
-              </label>
-              <textarea
-                id="query"
-                value={query}
-                placeholder={modeContent[mode].placeholder}
-                onChange={(event) => setQuery(event.target.value)}
-                rows={4}
-              />
-              <div className="field-hint">
-                {modeContent[mode].helper}
+        {view === "gather" ? (
+          <>
+            <header className="main-header">
+              <div>
+                <p className="eyebrow">Gather</p>
+                <h2>Find policies and statutes with purpose-built search</h2>
+                <p className="subtitle">
+                  Use prompt-driven discovery to collect full-text privacy
+                  documents. Every result can be crawled, reviewed, and appended
+                  to your policy collection.
+                </p>
               </div>
-              <div className="search-row">
+              <div className="header-card">
+                <p className="header-card-title">Active pipeline</p>
+                <p className="header-card-value">
+                  {results.length ? results.length : "—"}
+                </p>
+                <p className="header-card-caption">
+                  Results staged for review
+                </p>
+              </div>
+            </header>
+
+            <section className="gather-panel">
+              <div className="panel-header">
                 <div>
-                  <p className="search-preview-label">Query preview</p>
-                  <p className="search-preview">
-                    {searchQuery || "—"}
+                  <p className="panel-title">Gather sources</p>
+                  <p className="panel-subtitle">{modeContent[mode].headline}</p>
+                </div>
+                <div className="mode-toggle">
+                  {(["policy", "statute"] as GatherMode[]).map((item) => (
+                    <button
+                      key={item}
+                      className={`mode-button ${
+                        mode === item ? "is-active" : ""
+                      }`}
+                      type="button"
+                      onClick={() => {
+                        setMode(item);
+                        setQuery("");
+                        setResults([]);
+                        setError(null);
+                      }}
+                    >
+                      {modeContent[item].label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="panel-body">
+                <div className="search-block">
+                  <label className="field-label" htmlFor="query">
+                    Search prompt
+                  </label>
+                  <textarea
+                    id="query"
+                    value={query}
+                    placeholder={modeContent[mode].placeholder}
+                    onChange={(event) => setQuery(event.target.value)}
+                    rows={4}
+                  />
+                  <div className="field-hint">
+                    {modeContent[mode].helper}
+                  </div>
+                  <div className="search-row">
+                    <div>
+                      <p className="search-preview-label">Query preview</p>
+                      <p className="search-preview">{searchQuery || "—"}</p>
+                    </div>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={handleSearch}
+                      disabled={isSearching}
+                    >
+                      {isSearching ? "Searching…" : "Gather results"}
+                    </button>
+                  </div>
+                  {error ? (
+                    <div className="error-banner">
+                      <span className="error-text">{error}</span>
+                      <button
+                        type="button"
+                        className="error-copy-button"
+                        onClick={() => copyErrorToClipboard(error)}
+                        title={errorCopied ? "Copied!" : "Copy error"}
+                      >
+                        {errorCopied ? (
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        ) : (
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <rect
+                              x="9"
+                              y="9"
+                              width="13"
+                              height="13"
+                              rx="2"
+                              ry="2"
+                            />
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="context-block">
+                  <p className="context-title">Workflow notes</p>
+                  <ul>
+                    <li>{modeContent[mode].detail}</li>
+                    <li>Results are returned with relevance scoring.</li>
+                    <li>
+                      Use “View” to crawl the source at depth 1 and breadth 1.
+                    </li>
+                    <li>
+                      Save appends the crawled text to the policy collection.
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </section>
+
+            <section className="results-panel">
+              <div className="panel-header">
+                <p className="panel-title">Results</p>
+                <p className="panel-subtitle">
+                  {results.length
+                    ? `Showing ${results.length} sources for “${
+                        lastQuery || searchQuery
+                      }”.`
+                    : "Awaiting a gather query."}
+                </p>
+              </div>
+              <div className="results-grid">
+                {results.length === 0 ? (
+                  <div className="empty-state">
+                    <p>No sources yet.</p>
+                    <span>
+                      Run a gather search to populate policy or statute sources.
+                    </span>
+                  </div>
+                ) : (
+                  results.map((result) => (
+                    <article className="result-card" key={result.url}>
+                      <div className="result-header">
+                        <div>
+                          <h3>{result.title}</h3>
+                          <p>{result.description}</p>
+                        </div>
+                        <div className="score-stack">
+                          <span className="score-pill">
+                            {formatPercent(result.percent_match)}
+                          </span>
+                          <span className="score-caption">
+                            score {formatScore(result.score)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="result-footer">
+                        <span className="result-url">{result.url}</span>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => handleView(result)}
+                        >
+                          View
+                        </button>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+          </>
+        ) : (
+          <>
+            <header className="main-header">
+              <div>
+                <p className="eyebrow">List</p>
+                <h2>Browse stored policies and statutes</h2>
+                <p className="subtitle">
+                  Review documents already stored in the privacy-compliance
+                  database. Filter locally using the list search.
+                </p>
+              </div>
+              <div className="header-card">
+                <p className="header-card-title">Stored documents</p>
+                <p className="header-card-value">
+                  {documents.length ? documents.length : "—"}
+                </p>
+                <p className="header-card-caption">Available in this list</p>
+              </div>
+            </header>
+
+            <section className="results-panel">
+              <div className="panel-header list-header">
+                <div>
+                  <p className="panel-title">Document library</p>
+                  <p className="panel-subtitle">
+                    {isLoadingDocuments
+                      ? "Loading documents…"
+                      : `${filteredDocuments.length} of ${documents.length} documents shown.`}
                   </p>
                 </div>
+                <div className="mode-toggle">
+                  {(["policy", "statute"] as GatherMode[]).map((item) => (
+                    <button
+                      key={item}
+                      className={`mode-button ${
+                        listMode === item ? "is-active" : ""
+                      }`}
+                      type="button"
+                      onClick={() => setListMode(item)}
+                    >
+                      {modeContent[item].label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="list-controls">
+                <div className="list-search">
+                  <label className="field-label" htmlFor="document-search">
+                    Search listed documents
+                  </label>
+                  <input
+                    id="document-search"
+                    type="text"
+                    value={documentSearch}
+                    onChange={(event) => setDocumentSearch(event.target.value)}
+                    placeholder="Search by title, company, URL, or text"
+                  />
+                </div>
                 <button
-                  className="primary-button"
                   type="button"
-                  onClick={handleSearch}
-                  disabled={isSearching}
+                  className="ghost-button"
+                  onClick={() => handleDocumentsFetch(listMode)}
+                  disabled={isLoadingDocuments}
                 >
-                  {isSearching ? "Searching…" : "Gather results"}
+                  {isLoadingDocuments ? "Refreshing…" : "Refresh list"}
                 </button>
               </div>
-              {error ? (
-                <div className="error-banner">
-                  <span className="error-text">{error}</span>
+
+              {documentsError ? (
+                <div className="error-banner list-error">
+                  <span className="error-text">{documentsError}</span>
                   <button
                     type="button"
                     className="error-copy-button"
-                    onClick={() => copyErrorToClipboard(error)}
+                    onClick={() => copyErrorToClipboard(documentsError)}
                     title={errorCopied ? "Copied!" : "Copy error"}
                   >
                     {errorCopied ? (
@@ -442,72 +777,65 @@ export default function App() {
                   </button>
                 </div>
               ) : null}
-            </div>
-            <div className="context-block">
-              <p className="context-title">Workflow notes</p>
-              <ul>
-                <li>{modeContent[mode].detail}</li>
-                <li>Results are returned with relevance scoring.</li>
-                <li>
-                  Use “View” to crawl the source at depth 1 and breadth 1.
-                </li>
-                <li>
-                  Save appends the crawled text to the policy collection.
-                </li>
-              </ul>
-            </div>
-          </div>
-        </section>
 
-        <section className="results-panel">
-          <div className="panel-header">
-            <p className="panel-title">Results</p>
-            <p className="panel-subtitle">
-              {results.length
-                ? `Showing ${results.length} sources for “${lastQuery || searchQuery}”.`
-                : "Awaiting a gather query."}
-            </p>
-          </div>
-          <div className="results-grid">
-            {results.length === 0 ? (
-              <div className="empty-state">
-                <p>No sources yet.</p>
-                <span>
-                  Run a gather search to populate policy or statute sources.
-                </span>
-              </div>
-            ) : (
-              results.map((result) => (
-                <article className="result-card" key={result.url}>
-                  <div className="result-header">
-                    <div>
-                      <h3>{result.title}</h3>
-                      <p>{result.description}</p>
-                    </div>
-                    <div className="score-stack">
-                      <span className="score-pill">
-                        {formatPercent(result.percent_match)}
-                      </span>
-                      <span className="score-caption">
-                        score {formatScore(result.score)}
-                      </span>
-                    </div>
+              <div className="results-grid">
+                {isLoadingDocuments ? (
+                  <div className="loading-state list-loading">
+                    <span className="loader" />
+                    Loading documents…
                   </div>
-                  <div className="result-footer">
-                    <span className="result-url">{result.url}</span>
-                    <button
-                      type="button"
-                      className="ghost-button"
-                      onClick={() => handleView(result)}
+                ) : filteredDocuments.length === 0 ? (
+                  <div className="empty-state">
+                    <p>No documents yet.</p>
+                    <span>
+                      Try refreshing or adjust the local search filter.
+                    </span>
+                  </div>
+                ) : (
+                  filteredDocuments.map((doc, index) => (
+                    <article
+                      className="result-card document-card"
+                      key={`${doc.source_url || doc.title || "doc"}-${index}`}
                     >
-                      View
-                    </button>
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
+                      <div className="result-header">
+                        <div>
+                          <h3>{doc.title || "Untitled document"}</h3>
+                          <p>
+                            {doc.company_name ||
+                              doc.description ||
+                              "No description available."}
+                          </p>
+                        </div>
+                        <div className="score-stack">
+                          <span className="score-pill">
+                            {doc.text_length
+                              ? `${doc.text_length} chars`
+                              : "—"}
+                          </span>
+                          <span className="score-caption">
+                            {formatDate(doc.gathered_at)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="result-footer">
+                        <span className="result-url">
+                          {doc.source_url ||
+                            toDisplayString(doc.url) ||
+                            "No source URL"}
+                        </span>
+                        <span className="document-tag">
+                          {listMode === "policy"
+                            ? "Policy"
+                            : "Statute"}
+                        </span>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+          </>
+        )}
       </main>
 
       {selectedResult ? (

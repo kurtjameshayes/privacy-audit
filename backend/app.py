@@ -191,6 +191,31 @@ def save_policy() -> Any:
     return jsonify({"message": message, "data": data})
 
 
+@app.route("/api/documents", methods=["POST"])
+def list_documents() -> Any:
+    """Proxy document listing requests to the upstream API."""
+    payload = request.get_json(silent=True) or {}
+    database_name = str(payload.get("database_name", "")).strip()
+    collection_name = str(payload.get("collection_name", "")).strip()
+
+    if not database_name or not collection_name:
+        return jsonify({
+            "error": "database_name and collection_name are required."
+        }), 400
+
+    data, error = forward_post(
+        "/documents",
+        {
+            "database_name": database_name,
+            "collection_name": collection_name,
+        },
+    )
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
 @app.route("/")
 def serve_index() -> Any:
     index_path = os.path.join(STATIC_FOLDER, "index.html")
