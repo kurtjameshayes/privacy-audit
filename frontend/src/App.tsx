@@ -130,18 +130,7 @@ export default function App() {
   }, []);
 
   const trimmedQuery = query.trim();
-  const statuteSearchPhrases = [
-    "Identified or identifiable natural person",
-    "Right to opt out of the sale of personal information",
-    "Right to access, correct, and delete",
-    "Determines the purposes and means of processing",
-    "Processes personal data on behalf of a controller",
-    "Reasonably necessary and proportionate",
-    "De-identified data or aggregate consumer information",
-    "Decisions that produce legal or similarly significant effects",
-    "Specific, informed, and unambiguous consent",
-    "Consumer request that is verifiable",
-  ].join(" ");
+  const statuteAppendPrompt = "Privacy Statute Law full text";
 
   const searchQuery = useMemo(() => {
     if (!trimmedQuery) {
@@ -153,8 +142,8 @@ export default function App() {
       const parts = [prepend, trimmedQuery, append].filter(Boolean);
       return parts.join(" ");
     }
-    return `${trimmedQuery} ${statuteSearchPhrases}`;
-  }, [mode, policySearchConfig, statuteSearchPhrases, trimmedQuery]);
+    return `${trimmedQuery} ${statuteAppendPrompt}`;
+  }, [mode, policySearchConfig, statuteAppendPrompt, trimmedQuery]);
 
   const handleSearch = async () => {
     if (!trimmedQuery) {
