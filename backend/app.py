@@ -245,6 +245,70 @@ def list_documents() -> Any:
     return jsonify(data)
 
 
+@app.route("/api/parse-llm", methods=["POST"])
+def parse_llm() -> Any:
+    """Proxy parsing requests to the upstream API."""
+    payload = request.get_json(silent=True) or {}
+    database_name = str(payload.get("database_name", "")).strip()
+    collection_name = str(payload.get("collection_name", "")).strip()
+    document_id = str(payload.get("document_id", "")).strip()
+    prompt = str(payload.get("prompt", "")).strip()
+
+    if not database_name or not collection_name or not document_id or not prompt:
+        return jsonify({
+            "error": "database_name, collection_name, document_id, and prompt are required."
+        }), 400
+
+    data, error = forward_post(
+        "/parse-llm",
+        {
+            "database_name": database_name,
+            "collection_name": collection_name,
+            "document_id": document_id,
+            "prompt": prompt,
+        },
+    )
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/save-parsed", methods=["POST"])
+def save_parsed_document() -> Any:
+    """Persist parsed chunks to the chunk collections."""
+    payload = request.get_json(silent=True) or {}
+    database_name = str(payload.get("database_name", "")).strip()
+    collection_name = str(payload.get("collection_name", "")).strip()
+    document_id = str(payload.get("document_id", "")).strip()
+    chunks = payload.get("chunks")
+
+    if not database_name or not collection_name or not document_id or not chunks:
+        return jsonify({
+            "error": "database_name, collection_name, document_id, and chunks are required."
+        }), 400
+
+    document = {
+        "document_id": document_id,
+        "chunks": chunks,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    data, error = forward_post(
+        "/write_to_collection",
+        {
+            "database_name": database_name,
+            "collection_name": collection_name,
+            "document": document,
+            "mode": "append",
+        },
+    )
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify({"message": "Saved parsed document.", "data": data})
+
+
 @app.route("/")
 def serve_index() -> Any:
     index_path = os.path.join(STATIC_FOLDER, "index.html")
