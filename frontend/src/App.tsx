@@ -33,6 +33,8 @@ interface CrawlResponse {
 }
 
 interface DocumentRecord {
+  _id?: string;
+  document_id?: string;
   source_url?: string;
   title?: string;
   description?: string;
@@ -44,6 +46,12 @@ interface DocumentRecord {
   mode?: string;
   gathered_at?: string;
   [key: string]: unknown;
+}
+
+interface ParsedDocItem {
+  document_id: string;
+  parsed_header_text: string;
+  parsed_text: string;
 }
 
 const modeContent: Record<
@@ -132,6 +140,19 @@ const parseDocumentResponse = (data: unknown): DocumentRecord[] => {
   return [];
 };
 
+const parseParsedDocResponse = (data: unknown): ParsedDocItem[] => {
+  if (Array.isArray(data)) {
+    return data as ParsedDocItem[];
+  }
+  if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    if (Array.isArray(record.parsed_doc)) {
+      return record.parsed_doc as ParsedDocItem[];
+    }
+  }
+  return [];
+};
+
 export default function App() {
   const [view, setView] = useState<ViewMode>("gather");
   const [mode, setMode] = useState<GatherMode>("policy");
@@ -158,6 +179,13 @@ export default function App() {
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
   const [documentsError, setDocumentsError] = useState<string | null>(null);
+  const [parseTarget, setParseTarget] = useState<DocumentRecord | null>(null);
+  const [parsePrompt, setParsePrompt] = useState("");
+  const [parseResults, setParseResults] = useState<ParsedDocItem[]>([]);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const [isSavingParsed, setIsSavingParsed] = useState(false);
+  const [saveParsedMessage, setSaveParsedMessage] = useState<string | null>(null);
 
   const copyErrorToClipboard = async (text: string) => {
     try {
@@ -202,6 +230,7 @@ export default function App() {
 
   const trimmedQuery = query.trim();
   const statuteAppendPrompt = "Privacy Statute Law full text";
+  const listCollection = listMode === "policy" ? "policies" : "statutes";
 
   const searchQuery = useMemo(() => {
     if (!trimmedQuery) {
@@ -287,6 +316,131 @@ export default function App() {
       setDocumentsError(message);
     } finally {
       setIsLoadingDocuments(false);
+    }
+  };
+
+  const getDocumentId = (doc: DocumentRecord) =>
+    toDisplayString(doc._id ?? doc.document_id);
+
+  const handleOpenParse = (doc: DocumentRecord) => {
+    setParseTarget(doc);
+    setParsePrompt("");
+    setParseResults([]);
+    setParseError(null);
+    setSaveParsedMessage(null);
+  };
+
+  const handleCloseParse = () => {
+    setParseTarget(null);
+    setParseResults([]);
+    setParseError(null);
+    setSaveParsedMessage(null);
+  };
+
+  const handleRunParse = async () => {
+    if (!parseTarget) {
+      return;
+    }
+    const prompt = parsePrompt.trim();
+    const documentId = getDocumentId(parseTarget);
+    if (!documentId) {
+      setParseError("Document ID is missing for this record.");
+      return;
+    }
+    if (!prompt) {
+      setParseError("Please enter a parsing prompt.");
+      return;
+    }
+
+    setIsParsing(true);
+    setParseError(null);
+    setSaveParsedMessage(null);
+
+    try {
+      const response = await fetch("/api/parse-llm", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          database_name: "privacy-compliance",
+          collection_name: listCollection,
+          document_id: documentId,
+          prompt,
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || "Unable to parse document.");
+      }
+
+      const data = (await response.json()) as unknown;
+      const parsed = parseParsedDocResponse(data);
+      setParseResults(parsed);
+      if (parsed.length === 0) {
+        setParseError("No parsed output returned.");
+      }
+    } catch (caught) {
+      const message =
+        caught instanceof Error ? caught.message : "Unable to parse document.";
+      setParseError(message);
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleSaveParsed = async () => {
+    if (!parseTarget) {
+      return;
+    }
+    const documentId = getDocumentId(parseTarget);
+    if (!documentId) {
+      setSaveParsedMessage("Document ID is missing for this record.");
+      return;
+    }
+    if (parseResults.length === 0) {
+      setSaveParsedMessage("Run a parse before saving.");
+      return;
+    }
+
+    setIsSavingParsed(true);
+    setSaveParsedMessage(null);
+
+    try {
+      const response = await fetch("/api/save-parsed", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          database_name: "privacy-compliance",
+          collection_name:
+            listMode === "policy" ? "policy_chunks" : "statute_chunks",
+          document_id: documentId,
+          chunks: parseResults.map((item) => ({
+            document_id: toDisplayString(item.document_id) || documentId,
+            chunk_header_text: toDisplayString(item.parsed_header_text),
+            chunk_text: toDisplayString(item.parsed_text),
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || "Unable to save parsed document.");
+      }
+
+      const data = (await response.json()) as { message?: string };
+      setSaveParsedMessage(data.message || "Saved parsed document.");
+    } catch (caught) {
+      const message =
+        caught instanceof Error
+          ? caught.message
+          : "Unable to save parsed document.";
+      setSaveParsedMessage(message);
+    } finally {
+      setIsSavingParsed(false);
     }
   };
 
@@ -823,11 +977,20 @@ export default function App() {
                             toDisplayString(doc.url) ||
                             "No source URL"}
                         </span>
-                        <span className="document-tag">
-                          {listMode === "policy"
-                            ? "Policy"
-                            : "Statute"}
-                        </span>
+                        <div className="document-actions">
+                          <span className="document-tag">
+                            {listMode === "policy"
+                              ? "Policy"
+                              : "Statute"}
+                          </span>
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() => handleOpenParse(doc)}
+                          >
+                            View
+                          </button>
+                        </div>
                       </div>
                     </article>
                   ))
@@ -963,6 +1126,130 @@ export default function App() {
                 OK
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {parseTarget ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card parse-modal">
+            <div className="modal-header">
+              <div>
+                <p className="modal-title">View document</p>
+                <p className="modal-url">
+                  {parseTarget.title ||
+                    parseTarget.company_name ||
+                    "Selected document"}{" "}
+                  · ID {getDocumentId(parseTarget) || "Unknown"}
+                </p>
+              </div>
+              <div className="modal-actions">
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={handleCloseParse}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="modal-body parse-body">
+              <div className="parse-prompt">
+                <label className="field-label" htmlFor="parse-prompt">
+                  LLM parsing prompt
+                </label>
+                <textarea
+                  id="parse-prompt"
+                  value={parsePrompt}
+                  onChange={(event) => setParsePrompt(event.target.value)}
+                  rows={3}
+                  placeholder="Describe how you want the document segmented."
+                />
+                <div className="field-hint">
+                  Adjust the prompt and re-run parse until the chunks look right.
+                </div>
+                <div className="parse-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={handleRunParse}
+                    disabled={isParsing || !parsePrompt.trim()}
+                  >
+                    {isParsing ? "Parsing…" : "Parse"}
+                  </button>
+                </div>
+              </div>
+
+              {parseError ? (
+                <div className="error-banner">
+                  <span className="error-text">{parseError}</span>
+                </div>
+              ) : null}
+
+              <div className="parse-results">
+                <div className="parse-results-header">
+                  <p className="panel-title">Parsed sections</p>
+                  <p className="panel-subtitle">
+                    {parseResults.length
+                      ? `${parseResults.length} sections ready to review.`
+                      : "Run a parse to generate sections."}
+                  </p>
+                </div>
+                <div className="parse-results-scroll">
+                  {isParsing ? (
+                    <div className="loading-state">
+                      <span className="loader" />
+                      Parsing document…
+                    </div>
+                  ) : parseResults.length === 0 ? (
+                    <div className="empty-state">
+                      <p>No parsed sections yet.</p>
+                      <span>Enter a prompt and run parse to continue.</span>
+                    </div>
+                  ) : (
+                    parseResults.map((item, idx) => (
+                      <article className="parse-section" key={`${item.document_id}-${idx}`}>
+                        <div className="parse-section-header">
+                          <p>{item.parsed_header_text || "Untitled section"}</p>
+                          <span>
+                            Section {idx + 1} · Doc {item.document_id}
+                          </span>
+                        </div>
+                        <div className="parse-section-body">
+                          {item.parsed_text}
+                        </div>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="modal-actions parse-footer">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => {
+                  setParsePrompt("");
+                  setParseResults([]);
+                  setParseError(null);
+                  setSaveParsedMessage(null);
+                }}
+                disabled={isParsing || isSavingParsed}
+              >
+                Reset
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={handleSaveParsed}
+                disabled={isSavingParsed || parseResults.length === 0}
+              >
+                {isSavingParsed ? "Saving…" : "Save parsed"}
+              </button>
+            </div>
+            {saveParsedMessage ? (
+              <div className="modal-footer">{saveParsedMessage}</div>
+            ) : null}
           </div>
         </div>
       ) : null}
