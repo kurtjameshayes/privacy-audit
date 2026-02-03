@@ -54,6 +54,38 @@ interface ParsedDocItem {
   parsed_text: string;
 }
 
+interface ChunkRecord {
+  _id?: string;
+  document_id?: string;
+  chunks?: Array<{
+    document_id?: string;
+    chunk_header_text?: string;
+    chunk_text?: string;
+  }>;
+  timestamp?: string;
+}
+
+const extractResponseArray = (data: unknown): unknown[] => {
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    const candidates = [
+      record.documents,
+      record.data,
+      record.results,
+      record.items,
+    ];
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return [];
+};
+
 const modeContent: Record<
   GatherMode,
   {
@@ -108,6 +140,20 @@ const toDisplayString = (value: unknown) => {
   return String(value).trim();
 };
 
+const extractDocumentId = (value: unknown) => {
+  if (typeof value === "string" || typeof value === "number") {
+    return toDisplayString(value);
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const oid = toDisplayString(record.$oid ?? record.oid ?? record.id);
+    if (oid) {
+      return oid;
+    }
+  }
+  return "";
+};
+
 const formatDate = (value?: string) => {
   if (!value) {
     return "—";
@@ -119,26 +165,8 @@ const formatDate = (value?: string) => {
   return parsed.toLocaleString();
 };
 
-const parseDocumentResponse = (data: unknown): DocumentRecord[] => {
-  if (Array.isArray(data)) {
-    return data as DocumentRecord[];
-  }
-  if (data && typeof data === "object") {
-    const record = data as Record<string, unknown>;
-    const candidates = [
-      record.documents,
-      record.data,
-      record.results,
-      record.items,
-    ];
-    for (const candidate of candidates) {
-      if (Array.isArray(candidate)) {
-        return candidate as DocumentRecord[];
-      }
-    }
-  }
-  return [];
-};
+const parseDocumentResponse = (data: unknown): DocumentRecord[] =>
+  extractResponseArray(data) as DocumentRecord[];
 
 const parseParsedDocResponse = (data: unknown): ParsedDocItem[] => {
   if (Array.isArray(data)) {
@@ -151,6 +179,35 @@ const parseParsedDocResponse = (data: unknown): ParsedDocItem[] => {
     }
   }
   return [];
+};
+
+const parseChunkDocumentsResponse = (data: unknown): ParsedDocItem[] => {
+  const records = extractResponseArray(data) as ChunkRecord[];
+  const sortedRecords = [...records].sort((first, second) => {
+    const firstTime = Date.parse(toDisplayString(first?.timestamp));
+    const secondTime = Date.parse(toDisplayString(second?.timestamp));
+    if (Number.isNaN(firstTime) && Number.isNaN(secondTime)) {
+      return 0;
+    }
+    if (Number.isNaN(firstTime)) {
+      return 1;
+    }
+    if (Number.isNaN(secondTime)) {
+      return -1;
+    }
+    return secondTime - firstTime;
+  });
+
+  return sortedRecords.flatMap((record) => {
+    const documentId =
+      extractDocumentId(record.document_id) || extractDocumentId(record._id);
+    const chunks = Array.isArray(record.chunks) ? record.chunks : [];
+    return chunks.map((chunk) => ({
+      document_id: toDisplayString(chunk.document_id) || documentId,
+      parsed_header_text: toDisplayString(chunk.chunk_header_text),
+      parsed_text: toDisplayString(chunk.chunk_text),
+    }));
+  });
 };
 
 export default function App() {
@@ -184,6 +241,7 @@ export default function App() {
   const [parseResults, setParseResults] = useState<ParsedDocItem[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
+  const [isLoadingParsed, setIsLoadingParsed] = useState(false);
   const [isSavingParsed, setIsSavingParsed] = useState(false);
   const [saveParsedMessage, setSaveParsedMessage] = useState<string | null>(null);
 
@@ -231,6 +289,8 @@ export default function App() {
   const trimmedQuery = query.trim();
   const statuteAppendPrompt = "Privacy Statute Law full text";
   const listCollection = listMode === "policy" ? "policies" : "statutes";
+  const chunkCollection =
+    listMode === "policy" ? "policy_chunks" : "statute_chunks";
 
   const searchQuery = useMemo(() => {
     if (!trimmedQuery) {
@@ -320,7 +380,7 @@ export default function App() {
   };
 
   const getDocumentId = (doc: DocumentRecord) =>
-    toDisplayString(doc._id ?? doc.document_id);
+    extractDocumentId(doc._id) || extractDocumentId(doc.document_id);
 
   const handleOpenParse = (doc: DocumentRecord) => {
     setParseTarget(doc);
@@ -336,6 +396,58 @@ export default function App() {
     setParseError(null);
     setSaveParsedMessage(null);
   };
+
+  useEffect(() => {
+    if (!parseTarget) {
+      return;
+    }
+    const documentId = getDocumentId(parseTarget);
+    if (!documentId) {
+      setParseError("Document ID is missing for this record.");
+      return;
+    }
+
+    const loadExistingParsed = async () => {
+      setIsLoadingParsed(true);
+      setParseError(null);
+      setParseResults([]);
+
+      try {
+        const response = await fetch("/api/documents", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            database_name: "privacy-compliance",
+            collection_name: chunkCollection,
+            query: {
+              document_id: documentId,
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Unable to load parsed chunks.");
+        }
+
+        const data = (await response.json()) as unknown;
+        const parsed = parseChunkDocumentsResponse(data);
+        setParseResults(parsed);
+      } catch (caught) {
+        const message =
+          caught instanceof Error
+            ? caught.message
+            : "Unable to load parsed chunks.";
+        setParseError(message);
+      } finally {
+        setIsLoadingParsed(false);
+      }
+    };
+
+    void loadExistingParsed();
+  }, [parseTarget, chunkCollection]);
 
   const handleRunParse = async () => {
     if (!parseTarget) {
@@ -1154,73 +1266,104 @@ export default function App() {
               </div>
             </div>
             <div className="modal-body parse-body">
-              <div className="parse-prompt">
-                <label className="field-label" htmlFor="parse-prompt">
-                  LLM parsing prompt
-                </label>
-                <textarea
-                  id="parse-prompt"
-                  value={parsePrompt}
-                  onChange={(event) => setParsePrompt(event.target.value)}
-                  rows={3}
-                  placeholder="Describe how you want the document segmented."
-                />
-                <div className="field-hint">
-                  Adjust the prompt and re-run parse until the chunks look right.
+              <div className="parse-grid">
+                <div className="parse-panel">
+                  <div className="parse-panel-header">
+                    <p className="panel-title">Unparsed document</p>
+                    <p className="panel-subtitle">
+                      Source text used for parsing.
+                    </p>
+                  </div>
+                  <div className="parse-source-scroll">
+                    {toDisplayString(parseTarget.text) ? (
+                      <div className="parse-source-body">
+                        {toDisplayString(parseTarget.text)}
+                      </div>
+                    ) : (
+                      <div className="empty-state">
+                        <p>No source text available.</p>
+                        <span>Re-crawl or re-ingest this document.</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="parse-actions">
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={handleRunParse}
-                    disabled={isParsing || !parsePrompt.trim()}
-                  >
-                    {isParsing ? "Parsing…" : "Parse"}
-                  </button>
-                </div>
-              </div>
 
-              {parseError ? (
-                <div className="error-banner">
-                  <span className="error-text">{parseError}</span>
-                </div>
-              ) : null}
+                <div className="parse-panel">
+                  <div className="parse-prompt">
+                    <label className="field-label" htmlFor="parse-prompt">
+                      Parse prompt
+                    </label>
+                    <textarea
+                      id="parse-prompt"
+                      value={parsePrompt}
+                      onChange={(event) => setParsePrompt(event.target.value)}
+                      rows={3}
+                      placeholder="Describe how you want the document segmented."
+                    />
+                    <div className="field-hint">
+                      Adjust the prompt and re-run until the parsed chunks look
+                      right.
+                    </div>
+                    <div className="parse-actions">
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={handleRunParse}
+                        disabled={isParsing || !parsePrompt.trim()}
+                      >
+                        {isParsing ? "Prompting…" : "Prompt"}
+                      </button>
+                    </div>
+                  </div>
 
-              <div className="parse-results">
-                <div className="parse-results-header">
-                  <p className="panel-title">Parsed sections</p>
-                  <p className="panel-subtitle">
-                    {parseResults.length
-                      ? `${parseResults.length} sections ready to review.`
-                      : "Run a parse to generate sections."}
-                  </p>
-                </div>
-                <div className="parse-results-scroll">
-                  {isParsing ? (
-                    <div className="loading-state">
-                      <span className="loader" />
-                      Parsing document…
+                  {parseError ? (
+                    <div className="error-banner">
+                      <span className="error-text">{parseError}</span>
                     </div>
-                  ) : parseResults.length === 0 ? (
-                    <div className="empty-state">
-                      <p>No parsed sections yet.</p>
-                      <span>Enter a prompt and run parse to continue.</span>
+                  ) : null}
+
+                  <div className="parse-results">
+                    <div className="parse-results-header">
+                      <p className="panel-title">Parsed sections</p>
+                      <p className="panel-subtitle">
+                        {parseResults.length
+                          ? `${parseResults.length} sections ready to review.`
+                          : "Run a prompt to generate sections."}
+                      </p>
                     </div>
-                  ) : (
-                    parseResults.map((item, idx) => (
-                      <article className="parse-section" key={`${item.document_id}-${idx}`}>
-                        <div className="parse-section-header">
-                          <p>{item.parsed_header_text || "Untitled section"}</p>
-                          <span>
-                            Section {idx + 1} · Doc {item.document_id}
-                          </span>
+                    <div className="parse-results-scroll">
+                      {isParsing || isLoadingParsed ? (
+                        <div className="loading-state">
+                          <span className="loader" />
+                          {isParsing
+                            ? "Parsing document…"
+                            : "Loading parsed chunks…"}
                         </div>
-                        <div className="parse-section-body">
-                          {item.parsed_text}
+                      ) : parseResults.length === 0 ? (
+                        <div className="empty-state">
+                          <p>No parsed sections yet.</p>
+                          <span>Enter a prompt and run parse to continue.</span>
                         </div>
-                      </article>
-                    ))
-                  )}
+                      ) : (
+                        parseResults.map((item, idx) => (
+                          <article
+                            className="parse-section"
+                            key={`${item.document_id}-${idx}`}
+                          >
+                            <div className="parse-section-header">
+                              <p>{item.parsed_header_text || "Untitled section"}</p>
+                              <span>
+                                Section {idx + 1} · Doc {item.document_id}
+                              </span>
+                            </div>
+                            <div className="parse-section-body">
+                              {item.parsed_text}
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
