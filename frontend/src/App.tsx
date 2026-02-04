@@ -210,6 +210,9 @@ const parseChunkDocumentsResponse = (data: unknown): ParsedDocItem[] => {
   });
 };
 
+const getParseKey = (item: ParsedDocItem, index: number) =>
+  `${item.document_id}-${index}`;
+
 export default function App() {
   const [view, setView] = useState<ViewMode>("gather");
   const [mode, setMode] = useState<GatherMode>("policy");
@@ -237,6 +240,7 @@ export default function App() {
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
   const [documentsError, setDocumentsError] = useState<string | null>(null);
   const [parseTarget, setParseTarget] = useState<DocumentRecord | null>(null);
+  const [parseDocumentId, setParseDocumentId] = useState("");
   const [parsePrompt, setParsePrompt] = useState("");
   const [parseResults, setParseResults] = useState<ParsedDocItem[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -244,6 +248,9 @@ export default function App() {
   const [isLoadingParsed, setIsLoadingParsed] = useState(false);
   const [isSavingParsed, setIsSavingParsed] = useState(false);
   const [saveParsedMessage, setSaveParsedMessage] = useState<string | null>(null);
+  const [parseSelections, setParseSelections] = useState<
+    Record<string, boolean>
+  >({});
 
   const copyErrorToClipboard = async (text: string) => {
     try {
@@ -379,29 +386,32 @@ export default function App() {
     }
   };
 
-  const getDocumentId = (doc: DocumentRecord) =>
-    extractDocumentId(doc._id) || extractDocumentId(doc.document_id);
+  const getDocumentId = (doc: DocumentRecord) => extractDocumentId(doc._id);
 
   const handleOpenParse = (doc: DocumentRecord) => {
     setParseTarget(doc);
+    setParseDocumentId(getDocumentId(doc));
     setParsePrompt("");
     setParseResults([]);
     setParseError(null);
     setSaveParsedMessage(null);
+    setParseSelections({});
   };
 
   const handleCloseParse = () => {
     setParseTarget(null);
+    setParseDocumentId("");
     setParseResults([]);
     setParseError(null);
     setSaveParsedMessage(null);
+    setParseSelections({});
   };
 
   useEffect(() => {
     if (!parseTarget) {
       return;
     }
-    const documentId = getDocumentId(parseTarget);
+    const documentId = parseDocumentId;
     if (!documentId) {
       setParseError("Document ID is missing for this record.");
       return;
@@ -447,14 +457,27 @@ export default function App() {
     };
 
     void loadExistingParsed();
-  }, [parseTarget, chunkCollection]);
+  }, [parseDocumentId, parseTarget, chunkCollection]);
+
+  useEffect(() => {
+    setParseSelections((previous) => {
+      if (parseResults.length === 0) {
+        return {};
+      }
+      return parseResults.reduce<Record<string, boolean>>((acc, item, idx) => {
+        const key = getParseKey(item, idx);
+        acc[key] = previous[key] ?? true;
+        return acc;
+      }, {});
+    });
+  }, [parseResults]);
 
   const handleRunParse = async () => {
     if (!parseTarget) {
       return;
     }
     const prompt = parsePrompt.trim();
-    const documentId = getDocumentId(parseTarget);
+    const documentId = parseDocumentId;
     if (!documentId) {
       setParseError("Document ID is missing for this record.");
       return;
@@ -506,13 +529,21 @@ export default function App() {
     if (!parseTarget) {
       return;
     }
-    const documentId = getDocumentId(parseTarget);
+    const documentId = parseDocumentId;
     if (!documentId) {
       setSaveParsedMessage("Document ID is missing for this record.");
       return;
     }
     if (parseResults.length === 0) {
       setSaveParsedMessage("Run a parse before saving.");
+      return;
+    }
+    const selectedResults = parseResults.filter((item, idx) => {
+      const key = getParseKey(item, idx);
+      return parseSelections[key] ?? true;
+    });
+    if (selectedResults.length === 0) {
+      setSaveParsedMessage("Select at least one parsed section to save.");
       return;
     }
 
@@ -530,8 +561,7 @@ export default function App() {
           collection_name:
             listMode === "policy" ? "policy_chunks" : "statute_chunks",
           document_id: documentId,
-          chunks: parseResults.map((item) => ({
-            document_id: toDisplayString(item.document_id) || documentId,
+          chunks: selectedResults.map((item) => ({
             chunk_header_text: toDisplayString(item.parsed_header_text),
             chunk_text: toDisplayString(item.parsed_text),
           })),
@@ -1252,7 +1282,7 @@ export default function App() {
                   {parseTarget.title ||
                     parseTarget.company_name ||
                     "Selected document"}{" "}
-                  · ID {getDocumentId(parseTarget) || "Unknown"}
+                  · ID {parseDocumentId || "Unknown"}
                 </p>
               </div>
               <div className="modal-actions">
@@ -1348,13 +1378,32 @@ export default function App() {
                         parseResults.map((item, idx) => (
                           <article
                             className="parse-section"
-                            key={`${item.document_id}-${idx}`}
+                            key={getParseKey(item, idx)}
                           >
                             <div className="parse-section-header">
                               <p>{item.parsed_header_text || "Untitled section"}</p>
-                              <span>
-                                Section {idx + 1} · Doc {item.document_id}
-                              </span>
+                              <div className="parse-section-meta">
+                                <span>
+                                  Section {idx + 1} · Doc {item.document_id}
+                                </span>
+                                <label className="parse-include">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      parseSelections[getParseKey(item, idx)] ??
+                                      true
+                                    }
+                                    onChange={(event) => {
+                                      const key = getParseKey(item, idx);
+                                      setParseSelections((previous) => ({
+                                        ...previous,
+                                        [key]: event.target.checked,
+                                      }));
+                                    }}
+                                  />
+                                  Include
+                                </label>
+                              </div>
                             </div>
                             <div className="parse-section-body">
                               {item.parsed_text}
@@ -1376,6 +1425,7 @@ export default function App() {
                   setParseResults([]);
                   setParseError(null);
                   setSaveParsedMessage(null);
+                  setParseSelections({});
                 }}
                 disabled={isParsing || isSavingParsed}
               >
