@@ -226,18 +226,26 @@ def list_documents() -> Any:
     payload = request.get_json(silent=True) or {}
     database_name = str(payload.get("database_name", "")).strip()
     collection_name = str(payload.get("collection_name", "")).strip()
+    query = payload.get("query")
 
     if not database_name or not collection_name:
         return jsonify({
             "error": "database_name and collection_name are required."
         }), 400
 
+    params: dict[str, Any] = {
+        "database_name": database_name,
+        "collection_name": collection_name,
+    }
+    if query is not None:
+        if isinstance(query, (dict, list)):
+            params["query"] = json.dumps(query)
+        else:
+            params["query"] = str(query)
+
     data, error = forward_get(
         "/documents",
-        {
-            "database_name": database_name,
-            "collection_name": collection_name,
-        },
+        params,
     )
     if error:
         message, status = error
@@ -253,7 +261,6 @@ def parse_llm() -> Any:
     collection_name = str(payload.get("collection_name", "")).strip()
     document_id = str(payload.get("document_id", "")).strip()
     prompt = str(payload.get("prompt", "")).strip()
-
     if not database_name or not collection_name or not document_id or not prompt:
         return jsonify({
             "error": "database_name, collection_name, document_id, and prompt are required."
@@ -262,6 +269,9 @@ def parse_llm() -> Any:
     data, error = forward_post(
         "/parse-llm",
         {
+            "database": database_name,
+            "collection": collection_name,
+            "parse_prompt": prompt,
             "database_name": database_name,
             "collection_name": collection_name,
             "document_id": document_id,
