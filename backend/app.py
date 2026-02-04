@@ -88,6 +88,35 @@ def forward_get(
         return {"raw": response.text}, None
 
 
+def forward_delete(
+    endpoint: str, params: dict[str, Any]
+) -> Tuple[Any, Tuple[str, int] | None]:
+    if not API_BASE_URL:
+        return None, ("GATHER_API_BASE_URL is not set.", 500)
+    if not FIRECRAWL_API_KEY:
+        return None, ("FIRECRAWL_API_KEY is not set.", 500)
+
+    url = f"{API_BASE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
+    try:
+        response = requests.delete(
+            url, params=params, headers=api_headers(), timeout=60
+        )
+    except requests.RequestException as exc:
+        return None, (str(exc), 502)
+
+    if response.status_code >= 400:
+        try:
+            message = response.json().get("error", response.text)
+        except ValueError:
+            message = response.text
+        return None, (message, response.status_code)
+
+    try:
+        return response.json(), None
+    except ValueError:
+        return {"raw": response.text}, None
+
+
 @app.route("/api/health", methods=["GET"])
 def health() -> Any:
     return jsonify({"status": "ok"})
@@ -299,6 +328,35 @@ def save_parsed_document() -> Any:
         }), 400
     if not isinstance(chunks, list):
         return jsonify({"error": "chunks must be a list."}), 400
+
+    query = {"document_id": document_id}
+    existing, error = forward_get(
+        "/documents",
+        {
+            "database_name": database_name,
+            "collection_name": collection_name,
+            "query": json.dumps(query),
+        },
+    )
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+
+    existing_documents = []
+    if isinstance(existing, dict):
+        existing_documents = existing.get("documents", [])
+    if existing_documents:
+        _, error = forward_delete(
+            "/documents",
+            {
+                "database_name": database_name,
+                "collection_name": collection_name,
+                "query": json.dumps(query),
+            },
+        )
+        if error:
+            message, status = error
+            return jsonify({"error": message}), status
 
     saved_records: list[Any] = []
     for index, chunk in enumerate(chunks):
