@@ -297,26 +297,49 @@ def save_parsed_document() -> Any:
         return jsonify({
             "error": "database_name, collection_name, document_id, and chunks are required."
         }), 400
+    if not isinstance(chunks, list):
+        return jsonify({"error": "chunks must be a list."}), 400
 
-    document = {
-        "document_id": document_id,
-        "chunks": chunks,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+    saved_records: list[Any] = []
+    for index, chunk in enumerate(chunks):
+        if not isinstance(chunk, dict):
+            return jsonify({
+                "error": f"Chunk at index {index} must be an object."
+            }), 400
+        chunk_text_header = str(
+            chunk.get("chunk_text_header") or chunk.get("chunk_header_text") or ""
+        ).strip()
+        chunk_text = str(chunk.get("chunk_text") or "").strip()
+        if not chunk_text_header and not chunk_text:
+            return jsonify({
+                "error": f"Chunk at index {index} is missing text."
+            }), 400
 
-    data, error = forward_post(
-        "/write_to_collection",
-        {
-            "database_name": database_name,
-            "collection_name": collection_name,
-            "document": document,
-            "mode": "append",
-        },
-    )
-    if error:
-        message, status = error
-        return jsonify({"error": message}), status
-    return jsonify({"message": "Saved parsed document.", "data": data})
+        document = {
+            "document_id": document_id,
+            "chunk_index": index,
+            "chunk_text_header": chunk_text_header,
+            "chunk_text": chunk_text,
+        }
+
+        data, error = forward_post(
+            "/write_to_collection",
+            {
+                "database_name": database_name,
+                "collection_name": collection_name,
+                "document": document,
+                "mode": "append",
+            },
+        )
+        if error:
+            message, status = error
+            return jsonify({"error": message}), status
+        saved_records.append(data)
+
+    return jsonify({
+        "message": f"Saved {len(saved_records)} parsed sections.",
+        "data": saved_records,
+    })
 
 
 @app.route("/")

@@ -57,8 +57,13 @@ interface ParsedDocItem {
 interface ChunkRecord {
   _id?: string;
   document_id?: string;
+  chunk_index?: number | string;
+  chunk_text_header?: string;
+  chunk_header_text?: string;
+  chunk_text?: string;
   chunks?: Array<{
     document_id?: string;
+    chunk_text_header?: string;
     chunk_header_text?: string;
     chunk_text?: string;
   }>;
@@ -184,6 +189,17 @@ const parseParsedDocResponse = (data: unknown): ParsedDocItem[] => {
 const parseChunkDocumentsResponse = (data: unknown): ParsedDocItem[] => {
   const records = extractResponseArray(data) as ChunkRecord[];
   const sortedRecords = [...records].sort((first, second) => {
+    const firstIndex = Number.parseInt(
+      toDisplayString(first?.chunk_index),
+      10
+    );
+    const secondIndex = Number.parseInt(
+      toDisplayString(second?.chunk_index),
+      10
+    );
+    if (Number.isFinite(firstIndex) && Number.isFinite(secondIndex)) {
+      return firstIndex - secondIndex;
+    }
     const firstTime = Date.parse(toDisplayString(first?.timestamp));
     const secondTime = Date.parse(toDisplayString(second?.timestamp));
     if (Number.isNaN(firstTime) && Number.isNaN(secondTime)) {
@@ -202,11 +218,31 @@ const parseChunkDocumentsResponse = (data: unknown): ParsedDocItem[] => {
     const documentId =
       extractDocumentId(record.document_id) || extractDocumentId(record._id);
     const chunks = Array.isArray(record.chunks) ? record.chunks : [];
-    return chunks.map((chunk) => ({
-      document_id: toDisplayString(chunk.document_id) || documentId,
-      parsed_header_text: toDisplayString(chunk.chunk_header_text),
-      parsed_text: toDisplayString(chunk.chunk_text),
-    }));
+    if (chunks.length > 0) {
+      return chunks.map((chunk) => ({
+        document_id: toDisplayString(chunk.document_id) || documentId,
+        parsed_header_text: toDisplayString(
+          chunk.chunk_text_header ?? chunk.chunk_header_text
+        ),
+        parsed_text: toDisplayString(chunk.chunk_text),
+      }));
+    }
+    if (
+      record.chunk_text ||
+      record.chunk_text_header ||
+      record.chunk_header_text
+    ) {
+      return [
+        {
+          document_id: documentId,
+          parsed_header_text: toDisplayString(
+            record.chunk_text_header ?? record.chunk_header_text
+          ),
+          parsed_text: toDisplayString(record.chunk_text),
+        },
+      ];
+    }
+    return [];
   });
 };
 
@@ -562,7 +598,7 @@ export default function App() {
             listMode === "policy" ? "policy_chunks" : "statute_chunks",
           document_id: documentId,
           chunks: selectedResults.map((item) => ({
-            chunk_header_text: toDisplayString(item.parsed_header_text),
+            chunk_text_header: toDisplayString(item.parsed_header_text),
             chunk_text: toDisplayString(item.parsed_text),
           })),
         }),
