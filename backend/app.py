@@ -198,6 +198,9 @@ def save_policy() -> Any:
     collection_name = STATUTE_COLLECTION if mode == "statute" else POLICY_COLLECTION
 
     company_name = str(payload.get("company_name", "")).strip() or None
+    jurisdiction = str(payload.get("jurisdiction", "")).strip() or None
+    if mode == "statute" and not jurisdiction:
+        return jsonify({"error": "Jurisdiction is required for statutes."}), 400
 
     document = {
         "source_url": url,
@@ -206,6 +209,7 @@ def save_policy() -> Any:
         "text": combined_text,
         "query": payload.get("query"),
         "company_name": company_name,
+        "jurisdiction": jurisdiction,
         "pages_crawled": payload.get("pages_crawled"),
         "text_length": payload.get("text_length"),
         "mode": mode,

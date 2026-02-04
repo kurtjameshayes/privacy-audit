@@ -41,6 +41,7 @@ interface DocumentRecord {
   text?: string;
   query?: string;
   company_name?: string;
+  jurisdiction?: string;
   pages_crawled?: number;
   text_length?: number;
   mode?: string;
@@ -269,6 +270,7 @@ export default function App() {
     useState<PolicySearchConfig | null>(null);
   const [showCompanyNameDialog, setShowCompanyNameDialog] = useState(false);
   const [companyName, setCompanyName] = useState("");
+  const [jurisdiction, setJurisdiction] = useState("");
   const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
   const [listMode, setListMode] = useState<GatherMode>("policy");
   const [documentSearch, setDocumentSearch] = useState("");
@@ -663,8 +665,14 @@ export default function App() {
     if (!crawlData || !selectedResult) {
       return;
     }
-    // Default company name to the user's search query (trimmed)
-    setCompanyName(trimmedQuery);
+    if (mode === "statute") {
+      setCompanyName("");
+      setJurisdiction("");
+    } else {
+      // Default company name to the user's search query (trimmed)
+      setCompanyName(trimmedQuery);
+      setJurisdiction("");
+    }
     setShowCompanyNameDialog(true);
   };
 
@@ -692,6 +700,7 @@ export default function App() {
           text_length: crawlData.text_length,
           query: lastQuery || searchQuery,
           company_name: companyName.trim(),
+          jurisdiction: jurisdiction.trim(),
           mode,
         }),
       });
@@ -746,6 +755,7 @@ export default function App() {
       const haystack = [
         doc.title,
         doc.company_name,
+            doc.jurisdiction,
         doc.description,
         doc.source_url,
         doc.query,
@@ -757,6 +767,11 @@ export default function App() {
       return haystack.includes(search);
     });
   }, [documentSearch, documents]);
+
+  const isStatuteSave = mode === "statute";
+  const saveFieldValue = isStatuteSave
+    ? jurisdiction.trim()
+    : companyName.trim();
 
   return (
     <div className="app-shell">
@@ -1133,7 +1148,11 @@ export default function App() {
                         <div>
                           <h3>{doc.title || "Untitled document"}</h3>
                           <p>
-                            {doc.company_name ||
+                            {listMode === "statute"
+                              ? doc.jurisdiction ||
+                                doc.description ||
+                                "No description available."
+                              : doc.company_name ||
                               doc.description ||
                               "No description available."}
                           </p>
@@ -1241,26 +1260,46 @@ export default function App() {
           <div className="modal-card company-name-dialog">
             <div className="modal-header">
               <div>
-                <p className="modal-title">Confirm Company Name</p>
+                <p className="modal-title">
+                  {isStatuteSave ? "Confirm Jurisdiction" : "Confirm Company Name"}
+                </p>
                 <p className="modal-subtitle">
-                  Please verify the company name before saving.
+                  {isStatuteSave
+                    ? "Please enter the jurisdiction before saving."
+                    : "Please verify the company name before saving."}
                 </p>
               </div>
             </div>
             <div className="modal-body">
-              <div className="field-group">
-                <label className="field-label" htmlFor="company-name">
-                  Company Name
-                </label>
-                <input
-                  id="company-name"
-                  type="text"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="Enter company name"
-                  autoFocus
-                />
-              </div>
+              {isStatuteSave ? (
+                <div className="field-group">
+                  <label className="field-label" htmlFor="statute-jurisdiction">
+                    Jurisdiction
+                  </label>
+                  <input
+                    id="statute-jurisdiction"
+                    type="text"
+                    value={jurisdiction}
+                    onChange={(e) => setJurisdiction(e.target.value)}
+                    placeholder="Enter jurisdiction"
+                    autoFocus
+                  />
+                </div>
+              ) : (
+                <div className="field-group">
+                  <label className="field-label" htmlFor="company-name">
+                    Company Name
+                  </label>
+                  <input
+                    id="company-name"
+                    type="text"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="Enter company name"
+                    autoFocus
+                  />
+                </div>
+              )}
             </div>
             <div className="modal-actions dialog-actions">
               <button
@@ -1274,9 +1313,9 @@ export default function App() {
                 className="primary-button"
                 type="button"
                 onClick={handleConfirmSave}
-                disabled={!companyName.trim()}
+                disabled={!saveFieldValue}
               >
-                Save Policy
+                {isStatuteSave ? "Save Statute" : "Save Policy"}
               </button>
             </div>
           </div>
