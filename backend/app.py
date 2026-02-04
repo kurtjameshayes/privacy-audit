@@ -208,13 +208,15 @@ def save_policy() -> Any:
         "description": payload.get("description"),
         "text": combined_text,
         "query": payload.get("query"),
-        "company_name": company_name,
-        "jurisdiction": jurisdiction,
         "pages_crawled": payload.get("pages_crawled"),
         "text_length": payload.get("text_length"),
         "mode": mode,
         "gathered_at": datetime.now(timezone.utc).isoformat(),
     }
+    if mode == "statute":
+        document["jurisdiction"] = jurisdiction
+    if mode != "statute":
+        document["company_name"] = company_name
 
     data, error = forward_post(
         "/write_to_collection",
@@ -402,6 +404,48 @@ def save_parsed_document() -> Any:
         "message": f"Saved {len(saved_records)} parsed sections.",
         "data": saved_records,
     })
+
+
+@app.route("/api/vector-index", methods=["POST"])
+def vector_index() -> Any:
+    """Proxy vector index requests to the upstream API."""
+    payload = request.get_json(silent=True) or {}
+    source_database_name = str(payload.get("source_database_name", "")).strip()
+    source_collection_name = str(payload.get("source_collection_name", "")).strip()
+    index_database_name = str(payload.get("index_database_name", "")).strip()
+    index_collection_name = str(payload.get("index_collection_name", "")).strip()
+    source_query = payload.get("source_query")
+
+    if (
+        not source_database_name
+        or not source_collection_name
+        or not index_database_name
+        or not index_collection_name
+    ):
+        return jsonify({
+            "error": (
+                "source_database_name, source_collection_name, index_database_name, "
+                "and index_collection_name are required."
+            )
+        }), 400
+
+    proxy_payload: dict[str, Any] = {
+        "source_database_name": source_database_name,
+        "source_collection_name": source_collection_name,
+        "index_database_name": index_database_name,
+        "index_collection_name": index_collection_name,
+    }
+    if source_query is not None:
+        if isinstance(source_query, (dict, list)):
+            proxy_payload["source_query"] = json.dumps(source_query)
+        else:
+            proxy_payload["source_query"] = str(source_query)
+
+    data, error = forward_post("/vector-index", proxy_payload)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
 
 
 @app.route("/")

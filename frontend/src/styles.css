@@ -851,6 +851,34 @@ input[type="text"]:focus {
   justify-content: flex-end;
 }
 
+.vector-panel {
+  border-top: 1px solid rgba(12, 18, 29, 0.1);
+  padding: 16px 24px 20px;
+  display: grid;
+  gap: 12px;
+}
+
+.vector-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.vector-form .field-group {
+  display: grid;
+  gap: 8px;
+}
+
+.vector-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.vector-message {
+  font-size: 13px;
+  color: var(--slate);
+}
+
 .loading-state {
   display: flex;
   align-items: center;
