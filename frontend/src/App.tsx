@@ -55,14 +55,6 @@ interface ParsedDocItem {
   parsed_text: string;
 }
 
-interface VectorIndexResponse {
-  chunks_indexed?: number;
-  skipped_rows?: number;
-  embedding_model?: string;
-  index_collection_name?: string;
-  index_database_name?: string;
-}
-
 interface ChunkRecord {
   _id?: string;
   document_id?: string;
@@ -79,11 +71,8 @@ interface ChunkRecord {
   timestamp?: string;
 }
 
-const DEFAULT_DATABASE_NAME = "privacy-compliance";
 const POLICY_CHUNK_COLLECTION = "policy_chunks";
 const STATUTE_CHUNK_COLLECTION = "statute_chunks";
-const POLICY_EMBEDDING_COLLECTION = "policy_embeddings";
-const STATUTE_EMBEDDING_COLLECTION = "statute_embeddings";
 
 const extractResponseArray = (data: unknown): unknown[] => {
   if (Array.isArray(data)) {
@@ -264,34 +253,6 @@ const parseChunkDocumentsResponse = (data: unknown): ParsedDocItem[] => {
 const getParseKey = (item: ParsedDocItem, index: number) =>
   `${item.document_id}-${index}`;
 
-const getVectorDefaults = (targetMode: GatherMode) => ({
-  sourceDatabaseName: DEFAULT_DATABASE_NAME,
-  indexDatabaseName: DEFAULT_DATABASE_NAME,
-  sourceCollectionName:
-    targetMode === "policy" ? POLICY_CHUNK_COLLECTION : STATUTE_CHUNK_COLLECTION,
-  indexCollectionName:
-    targetMode === "policy"
-      ? POLICY_EMBEDDING_COLLECTION
-      : STATUTE_EMBEDDING_COLLECTION,
-});
-
-const formatVectorIndexMessage = (data: VectorIndexResponse) => {
-  const parts: string[] = [];
-  if (typeof data.chunks_indexed === "number") {
-    parts.push(`Indexed ${data.chunks_indexed} chunks`);
-  }
-  if (typeof data.skipped_rows === "number") {
-    parts.push(`Skipped ${data.skipped_rows}`);
-  }
-  if (data.embedding_model) {
-    parts.push(`Model ${data.embedding_model}`);
-  }
-  if (parts.length > 0) {
-    return parts.join(" · ");
-  }
-  return "Vector index completed.";
-};
-
 export default function App() {
   const [view, setView] = useState<ViewMode>("gather");
   const [mode, setMode] = useState<GatherMode>("policy");
@@ -331,23 +292,6 @@ export default function App() {
   const [parseSelections, setParseSelections] = useState<
     Record<string, boolean>
   >({});
-  const [sourceDatabaseName, setSourceDatabaseName] = useState(
-    DEFAULT_DATABASE_NAME
-  );
-  const [sourceCollectionName, setSourceCollectionName] = useState(
-    POLICY_CHUNK_COLLECTION
-  );
-  const [indexDatabaseName, setIndexDatabaseName] = useState(
-    DEFAULT_DATABASE_NAME
-  );
-  const [indexCollectionName, setIndexCollectionName] = useState(
-    POLICY_EMBEDDING_COLLECTION
-  );
-  const [indexDocumentId, setIndexDocumentId] = useState("");
-  const [isIndexing, setIsIndexing] = useState(false);
-  const [indexMessage, setIndexMessage] = useState<string | null>(null);
-  const [indexError, setIndexError] = useState<string | null>(null);
-
   const copyErrorToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -485,7 +429,6 @@ export default function App() {
   const getDocumentId = (doc: DocumentRecord) => extractDocumentId(doc._id);
 
   const handleOpenParse = (doc: DocumentRecord) => {
-    const defaults = getVectorDefaults(listMode);
     const documentId = getDocumentId(doc);
     setParseTarget(doc);
     setParseDocumentId(documentId);
@@ -494,13 +437,6 @@ export default function App() {
     setParseError(null);
     setSaveParsedMessage(null);
     setParseSelections({});
-    setSourceDatabaseName(defaults.sourceDatabaseName);
-    setSourceCollectionName(defaults.sourceCollectionName);
-    setIndexDatabaseName(defaults.indexDatabaseName);
-    setIndexCollectionName(defaults.indexCollectionName);
-    setIndexDocumentId(documentId);
-    setIndexMessage(null);
-    setIndexError(null);
   };
 
   const handleCloseParse = () => {
@@ -510,8 +446,6 @@ export default function App() {
     setParseError(null);
     setSaveParsedMessage(null);
     setParseSelections({});
-    setIndexMessage(null);
-    setIndexError(null);
   };
 
   useEffect(() => {
@@ -690,58 +624,6 @@ export default function App() {
       setSaveParsedMessage(message);
     } finally {
       setIsSavingParsed(false);
-    }
-  };
-
-  const handleGenerateVectorIndex = async () => {
-    const sourceDb = sourceDatabaseName.trim();
-    const sourceCollection = sourceCollectionName.trim();
-    const indexDb = indexDatabaseName.trim();
-    const indexCollection = indexCollectionName.trim();
-    if (!sourceDb || !sourceCollection || !indexDb || !indexCollection) {
-      setIndexError("Fill in all required vector index fields.");
-      return;
-    }
-
-    setIsIndexing(true);
-    setIndexError(null);
-    setIndexMessage(null);
-
-    const payload: Record<string, unknown> = {
-      source_database_name: sourceDb,
-      source_collection_name: sourceCollection,
-      index_database_name: indexDb,
-      index_collection_name: indexCollection,
-    };
-    const documentId = indexDocumentId.trim();
-    if (documentId) {
-      payload.source_query = { document_id: documentId };
-    }
-
-    try {
-      const response = await fetch("/api/vector-index", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || "Unable to generate vector index.");
-      }
-
-      const data = (await response.json()) as VectorIndexResponse;
-      setIndexMessage(formatVectorIndexMessage(data));
-    } catch (caught) {
-      const message =
-        caught instanceof Error
-          ? caught.message
-          : "Unable to generate vector index.";
-      setIndexError(message);
-    } finally {
-      setIsIndexing(false);
     }
   };
 
@@ -1638,90 +1520,6 @@ export default function App() {
               >
                 {isSavingParsed ? "Saving…" : "Save parsed"}
               </button>
-            </div>
-            <div className="vector-panel">
-              <div className="parse-panel-header">
-                <p className="panel-title">Vector index</p>
-                <p className="panel-subtitle">
-                  Generate embeddings for parsed chunks.
-                </p>
-              </div>
-              <div className="vector-form">
-                <div className="field-group">
-                  <label className="field-label" htmlFor="source-database">
-                    Source database
-                  </label>
-                  <input
-                    id="source-database"
-                    type="text"
-                    value={sourceDatabaseName}
-                    onChange={(event) => setSourceDatabaseName(event.target.value)}
-                  />
-                </div>
-                <div className="field-group">
-                  <label className="field-label" htmlFor="source-collection">
-                    Source collection
-                  </label>
-                  <input
-                    id="source-collection"
-                    type="text"
-                    value={sourceCollectionName}
-                    onChange={(event) => setSourceCollectionName(event.target.value)}
-                  />
-                </div>
-                <div className="field-group">
-                  <label className="field-label" htmlFor="index-database">
-                    Index database
-                  </label>
-                  <input
-                    id="index-database"
-                    type="text"
-                    value={indexDatabaseName}
-                    onChange={(event) => setIndexDatabaseName(event.target.value)}
-                  />
-                </div>
-                <div className="field-group">
-                  <label className="field-label" htmlFor="index-collection">
-                    Index collection
-                  </label>
-                  <input
-                    id="index-collection"
-                    type="text"
-                    value={indexCollectionName}
-                    onChange={(event) => setIndexCollectionName(event.target.value)}
-                  />
-                </div>
-                <div className="field-group">
-                  <label className="field-label" htmlFor="index-document-id">
-                    Optional document ID filter
-                  </label>
-                  <input
-                    id="index-document-id"
-                    type="text"
-                    value={indexDocumentId}
-                    onChange={(event) => setIndexDocumentId(event.target.value)}
-                    placeholder="Leave blank to index all chunks"
-                  />
-                </div>
-              </div>
-              <div className="vector-actions">
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={handleGenerateVectorIndex}
-                  disabled={isIndexing}
-                >
-                  {isIndexing ? "Indexing…" : "Generate vector index"}
-                </button>
-              </div>
-              {indexError ? (
-                <div className="error-banner">
-                  <span className="error-text">{indexError}</span>
-                </div>
-              ) : null}
-              {indexMessage ? (
-                <div className="vector-message">{indexMessage}</div>
-              ) : null}
             </div>
             {saveParsedMessage ? (
               <div className="modal-footer">{saveParsedMessage}</div>
