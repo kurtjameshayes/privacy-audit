@@ -379,12 +379,12 @@ def save_parsed_document() -> Any:
                 "error": f"Chunk at index {index} is missing text."
             }), 400
 
-        document = {
-            "document_id": document_id,
-            "chunk_index": index,
-            "chunk_text_header": chunk_text_header,
-            "chunk_text": chunk_text,
-        }
+        document = dict(chunk)
+        document.pop("_id", None)
+        document["document_id"] = document_id
+        document["chunk_index"] = index
+        document["chunk_text_header"] = chunk_text_header
+        document["chunk_text"] = chunk_text
 
         data, error = forward_post(
             "/write_to_collection",

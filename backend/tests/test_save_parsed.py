@@ -54,6 +54,52 @@ def test_save_parsed_writes_each_section(monkeypatch: Any) -> None:
     assert second_document["chunk_text"] == "Text B"
 
 
+def test_save_parsed_preserves_llm_fields(monkeypatch: Any) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        calls.append(payload)
+        return {"ok": True}, None
+
+    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
+        raise AssertionError("forward_delete should not be called.")
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/save-parsed",
+        json={
+            "database_name": "privacy-compliance",
+            "collection_name": "policy_chunks",
+            "document_id": "doc-789",
+            "chunks": [
+                {
+                    "_id": "should-be-removed",
+                    "chunk_text_header": "Header C",
+                    "chunk_text": "Text C",
+                    "jurisdiction": "US",
+                    "section": "1.2",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    saved_document = calls[0]["document"]
+    assert saved_document["document_id"] == "doc-789"
+    assert saved_document["chunk_index"] == 0
+    assert saved_document["jurisdiction"] == "US"
+    assert saved_document["section"] == "1.2"
+    assert "_id" not in saved_document
+
+
 def test_save_parsed_deletes_existing_documents(monkeypatch: Any) -> None:
     calls: list[tuple[str, dict[str, Any]]] = []
 
