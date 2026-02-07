@@ -689,7 +689,7 @@ export default function App() {
     setSaveMessage(null);
 
     try {
-      const savePayload: Record<string, unknown> = {
+      const savePayload: Record<string, unknow``n> = {
         url: selectedResult.url,
         title: selectedResult.title,
         description: selectedResult.description,
