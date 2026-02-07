@@ -689,7 +689,10 @@ export default function App() {
     setSaveMessage(null);
 
     try {
-      const savePayload: Record<string, unknow``n> = {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/786e75f5-da0a-4fd9-9936-7cb070dccc74',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:'pre-fix',hypothesisId:'H1',location:'App.tsx:691',message:'handleConfirmSave entry',data:{hasCrawlData:!!crawlData,hasSelectedResult:!!selectedResult,mode},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      const savePayload: Record<string, unknown> = {
         url: selectedResult.url,
         title: selectedResult.title,
         description: selectedResult.description,
@@ -703,6 +706,9 @@ export default function App() {
       if (mode !== "statute") {
         savePayload.company_name = companyName.trim();
       }
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/786e75f5-da0a-4fd9-9936-7cb070dccc74',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:'pre-fix',hypothesisId:'H2',location:'App.tsx:709',message:'savePayload prepared',data:{payloadKeys:Object.keys(savePayload),mode,companyNameIncluded:mode!=="statute"},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       const response = await fetch("/api/save-policy", {
         method: "POST",
         headers: {
@@ -712,16 +718,25 @@ export default function App() {
       });
 
       if (!response.ok) {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/786e75f5-da0a-4fd9-9936-7cb070dccc74',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:'pre-fix',hypothesisId:'H3',location:'App.tsx:721',message:'save-policy non-ok response',data:{status:response.status,statusText:response.statusText},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         const message = await response.text();
         throw new Error(message || "Unable to save policy.");
       }
 
       const data = (await response.json()) as { message?: string };
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/786e75f5-da0a-4fd9-9936-7cb070dccc74',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:'pre-fix',hypothesisId:'H4',location:'App.tsx:728',message:'save-policy success',data:{hasMessage:!!data.message},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setSaveMessage(data.message || "Saved to policy collection.");
       setShowSaveConfirmation(true);
     } catch (caught) {
       const message =
         caught instanceof Error ? caught.message : "Unable to save policy.";
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/786e75f5-da0a-4fd9-9936-7cb070dccc74',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:'pre-fix',hypothesisId:'H5',location:'App.tsx:736',message:'save-policy error',data:{errorMessage:message},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setSaveMessage(message);
     } finally {
       setIsSaving(false);
