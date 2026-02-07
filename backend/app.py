@@ -370,20 +370,26 @@ def save_parsed_document() -> Any:
             return jsonify({
                 "error": f"Chunk at index {index} must be an object."
             }), 400
-        chunk_text_header = str(
-            chunk.get("chunk_text_header") or chunk.get("chunk_header_text") or ""
+        chunk_header_text = str(
+            chunk.get("parsed_header_text")
+            or chunk.get("chunk_header_text")
+            or ""
         ).strip()
-        chunk_text = str(chunk.get("chunk_text") or "").strip()
-        if not chunk_text_header and not chunk_text:
+        chunk_text = str(
+            chunk.get("parsed_text") or chunk.get("chunk_text") or ""
+        ).strip()
+        if not chunk_header_text and not chunk_text:
             return jsonify({
                 "error": f"Chunk at index {index} is missing text."
             }), 400
 
         document = dict(chunk)
         document.pop("_id", None)
+        document.pop("parsed_header_text", None)
+        document.pop("parsed_text", None)
         document["document_id"] = document_id
         document["chunk_index"] = index
-        document["chunk_text_header"] = chunk_text_header
+        document["chunk_header_text"] = chunk_header_text
         document["chunk_text"] = chunk_text
 
         data, error = forward_post(
@@ -480,4 +486,4 @@ def handle_405(error: Any) -> Any:
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5120, debug=True)

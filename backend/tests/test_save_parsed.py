@@ -31,11 +31,11 @@ def test_save_parsed_writes_each_section(monkeypatch: Any) -> None:
             "document_id": "doc-123",
             "chunks": [
                 {
-                    "chunk_text_header": "Header A",
+                    "chunk_header_text": "Header A",
                     "chunk_text": "Text A",
                 },
                 {
-                    "chunk_text_header": "Header B",
+                    "chunk_header_text": "Header B",
                     "chunk_text": "Text B",
                 },
             ],
@@ -47,11 +47,59 @@ def test_save_parsed_writes_each_section(monkeypatch: Any) -> None:
     first_document = calls[0]["document"]
     second_document = calls[1]["document"]
     assert first_document["chunk_index"] == 0
-    assert first_document["chunk_text_header"] == "Header A"
+    assert first_document["chunk_header_text"] == "Header A"
     assert first_document["chunk_text"] == "Text A"
     assert second_document["chunk_index"] == 1
-    assert second_document["chunk_text_header"] == "Header B"
+    assert second_document["chunk_header_text"] == "Header B"
     assert second_document["chunk_text"] == "Text B"
+
+
+def test_save_parsed_accepts_parsed_header_and_text(monkeypatch: Any) -> None:
+    """Parse-llm returns parsed_header_text and parsed_text; backend accepts them."""
+    calls: list[dict[str, Any]] = []
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        calls.append(payload)
+        return {"ok": True}, None
+
+    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
+        raise AssertionError("forward_delete should not be called.")
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/save-parsed",
+        json={
+            "database_name": "privacy-compliance",
+            "collection_name": "statute_chunks",
+            "document_id": "doc-ccpa",
+            "chunks": [
+                {
+                    "code_name": "California Consumer Privacy Act",
+                    "jurisdiction": "California",
+                    "parsed_header_text": "General Duties of Businesses",
+                    "parsed_text": "# 1798.100. General Duties...",
+                    "section": "§ 1798.100",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    saved_document = calls[0]["document"]
+    assert saved_document["chunk_header_text"] == "General Duties of Businesses"
+    assert saved_document["chunk_text"].startswith("# 1798.100. General Duties")
+    assert saved_document["code_name"] == "California Consumer Privacy Act"
+    assert saved_document["jurisdiction"] == "California"
+    assert saved_document["section"] == "§ 1798.100"
+    assert "_id" not in saved_document
 
 
 def test_save_parsed_preserves_llm_fields(monkeypatch: Any) -> None:
@@ -81,7 +129,7 @@ def test_save_parsed_preserves_llm_fields(monkeypatch: Any) -> None:
             "chunks": [
                 {
                     "_id": "should-be-removed",
-                    "chunk_text_header": "Header C",
+                    "chunk_header_text": "Header C",
                     "chunk_text": "Text C",
                     "jurisdiction": "US",
                     "section": "1.2",
@@ -128,7 +176,7 @@ def test_save_parsed_deletes_existing_documents(monkeypatch: Any) -> None:
             "document_id": "doc-456",
             "chunks": [
                 {
-                    "chunk_text_header": "Header A",
+                    "chunk_header_text": "Header A",
                     "chunk_text": "Text A",
                 }
             ],

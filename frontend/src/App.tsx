@@ -50,25 +50,21 @@ interface DocumentRecord {
 }
 
 interface ParsedDocItem {
-  document_id: string;
+  document_id?: string;
   parsed_header_text: string;
   parsed_text: string;
+  [key: string]: unknown;
 }
 
 interface ChunkRecord {
   _id?: string;
   document_id?: string;
   chunk_index?: number | string;
-  chunk_text_header?: string;
   chunk_header_text?: string;
   chunk_text?: string;
-  chunks?: Array<{
-    document_id?: string;
-    chunk_text_header?: string;
-    chunk_header_text?: string;
-    chunk_text?: string;
-  }>;
+  chunks?: Array<Record<string, unknown>>;
   timestamp?: string;
+  [key: string]: unknown;
 }
 
 const POLICY_CHUNK_COLLECTION = "policy_chunks";
@@ -223,25 +219,23 @@ const parseChunkDocumentsResponse = (data: unknown): ParsedDocItem[] => {
       extractDocumentId(record.document_id) || extractDocumentId(record._id);
     const chunks = Array.isArray(record.chunks) ? record.chunks : [];
     if (chunks.length > 0) {
-      return chunks.map((chunk) => ({
-        document_id: toDisplayString(chunk.document_id) || documentId,
-        parsed_header_text: toDisplayString(
-          chunk.chunk_text_header ?? chunk.chunk_header_text
-        ),
-        parsed_text: toDisplayString(chunk.chunk_text),
-      }));
+      return chunks.map((chunk) => {
+        const { _id, ...rest } = chunk as Record<string, unknown>;
+        return {
+          ...rest,
+          document_id: toDisplayString(chunk.document_id) || documentId,
+        parsed_header_text: toDisplayString(chunk.chunk_header_text),
+          parsed_text: toDisplayString(chunk.chunk_text),
+        };
+      });
     }
-    if (
-      record.chunk_text ||
-      record.chunk_text_header ||
-      record.chunk_header_text
-    ) {
+    if (record.chunk_text || record.chunk_header_text) {
+      const { _id, ...rest } = record as Record<string, unknown>;
       return [
         {
+          ...rest,
           document_id: documentId,
-          parsed_header_text: toDisplayString(
-            record.chunk_text_header ?? record.chunk_header_text
-          ),
+          parsed_header_text: toDisplayString(record.chunk_header_text),
           parsed_text: toDisplayString(record.chunk_text),
         },
       ];
@@ -602,10 +596,21 @@ export default function App() {
           collection_name:
             listMode === "policy" ? "policy_chunks" : "statute_chunks",
           document_id: documentId,
-          chunks: selectedResults.map((item) => ({
-            chunk_text_header: toDisplayString(item.parsed_header_text),
-            chunk_text: toDisplayString(item.parsed_text),
-          })),
+          chunks: selectedResults.map((item) => {
+            const record = item as Record<string, unknown>;
+            const { _id, parsed_header_text, parsed_text, ...rest } = record;
+            const headerText =
+              toDisplayString(parsed_header_text) ||
+              toDisplayString(record.chunk_header_text);
+            const text =
+              toDisplayString(parsed_text) ||
+              toDisplayString(record.chunk_text);
+            return {
+              ...rest,
+              chunk_header_text: headerText,
+              chunk_text: text,
+            };
+          }),
         }),
       });
 
