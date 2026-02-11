@@ -67,7 +67,45 @@ interface ChunkRecord {
   [key: string]: unknown;
 }
 
+// Policy–statute compliance (OpenAPI-aligned)
+interface AppliedStatute {
+  statute_id: string;
+  jurisdiction: string;
+  title: string;
+  section_id: string;
+  matched_span: string;
+  evidence_score: number;
+}
+interface PolicySectionResult {
+  section_id: string;
+  section_text: string;
+  applied_statutes: AppliedStatute[];
+  compliance: "compliant" | "non_compliant" | "neither";
+  confidence: number;
+  rationale: string;
+  remediation_suggestions: string[];
+  retrieval_trace: string[];
+}
+interface SummaryCounts {
+  compliant: number;
+  non_compliant: number;
+  neither: number;
+}
+interface SummaryResult {
+  overall_compliance: "compliant" | "non_compliant" | "mixed" | "unknown";
+  counts: SummaryCounts;
+}
+interface PolicyStatuteComplianceResponse {
+  policy_id: string | null;
+  jurisdiction: string;
+  sections: PolicySectionResult[];
+  summary: SummaryResult;
+  warnings: string[];
+}
+type ComplianceFilter = "all" | "compliant" | "non_compliant" | "neither";
+
 const POLICY_CHUNK_COLLECTION = "policy_chunks";
+const DEFAULT_POLICY_COLLECTION = "policy_embeddings";
 const STATUTE_CHUNK_COLLECTION = "statute_chunks";
 
 const extractResponseArray = (data: unknown): unknown[] => {
@@ -286,6 +324,22 @@ export default function App() {
   const [parseSelections, setParseSelections] = useState<
     Record<string, boolean>
   >({});
+  // Policy–statute compliance
+  const [complianceResult, setComplianceResult] =
+    useState<PolicyStatuteComplianceResponse | null>(null);
+  const [complianceLoading, setComplianceLoading] = useState(false);
+  const [complianceError, setComplianceError] = useState<string | null>(null);
+  const [compliancePolicyId, setCompliancePolicyId] = useState("");
+  const [compliancePolicyCollection, setCompliancePolicyCollection] = useState(
+    DEFAULT_POLICY_COLLECTION
+  );
+  const [complianceJurisdiction, setComplianceJurisdiction] = useState("CA");
+  const [complianceFilter, setComplianceFilter] =
+    useState<ComplianceFilter>("all");
+  const [expandedSectionId, setExpandedSectionId] = useState<string | null>(null);
+  const [showComplianceRunModal, setShowComplianceRunModal] = useState(false);
+  const [complianceRunPolicy, setComplianceRunPolicy] =
+    useState<DocumentRecord | null>(null);
   const copyErrorToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -421,6 +475,79 @@ export default function App() {
   };
 
   const getDocumentId = (doc: DocumentRecord) => extractDocumentId(doc._id);
+
+  const handleOpenComplianceRun = (doc: DocumentRecord) => {
+    if (listMode !== "policy") return;
+    const docId = getDocumentId(doc);
+    setComplianceRunPolicy(doc);
+    setCompliancePolicyId(docId);
+    setCompliancePolicyCollection(DEFAULT_POLICY_COLLECTION);
+    setComplianceJurisdiction("CA");
+    setComplianceError(null);
+    setShowComplianceRunModal(true);
+  };
+
+  const handleCloseComplianceRunModal = () => {
+    setShowComplianceRunModal(false);
+    setComplianceRunPolicy(null);
+    setComplianceError(null);
+  };
+
+  const handleRunCompliance = async () => {
+    const policyId = compliancePolicyId.trim();
+    const policyCollection = compliancePolicyCollection.trim();
+    const jurisdiction = complianceJurisdiction.trim();
+    if (!policyId || !policyCollection || !jurisdiction) {
+      setComplianceError("Policy ID, policy collection, and jurisdiction are required.");
+      return;
+    }
+    setComplianceLoading(true);
+    setComplianceError(null);
+    setComplianceResult(null);
+    setExpandedSectionId(null);
+    setComplianceFilter("all");
+    try {
+      const response = await fetch("/api/compliance/policy-statute-compliance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          policy_id: policyId,
+          policy_collection: policyCollection,
+          jurisdiction,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const msg = typeof data?.error === "string" ? data.error : response.statusText || "Compliance check failed.";
+        throw new Error(msg);
+      }
+      setComplianceResult(data as PolicyStatuteComplianceResponse);
+      setShowComplianceRunModal(false);
+      setComplianceRunPolicy(null);
+    } catch (caught) {
+      setComplianceError(caught instanceof Error ? caught.message : "Compliance check failed.");
+    } finally {
+      setComplianceLoading(false);
+    }
+  };
+
+  const handleCloseComplianceResults = () => {
+    setComplianceResult(null);
+    setComplianceError(null);
+    setExpandedSectionId(null);
+  };
+
+  const complianceFilteredSections = useMemo(() => {
+    if (!complianceResult?.sections) return [];
+    if (complianceFilter === "all") return complianceResult.sections;
+    return complianceResult.sections.filter((s) => s.compliance === complianceFilter);
+  }, [complianceResult?.sections, complianceFilter]);
+
+  const formatConfidence = (value: number) => {
+    if (!Number.isFinite(value)) return "—";
+    const pct = value <= 1 ? value * 100 : value;
+    return `${Math.round(pct)}%`;
+  };
 
   const handleOpenParse = (doc: DocumentRecord) => {
     const documentId = getDocumentId(doc);
@@ -1045,22 +1172,193 @@ export default function App() {
           <>
             <header className="main-header">
               <div>
-                <p className="eyebrow">List</p>
-                <h2>Browse stored policies and statutes</h2>
+                <p className="eyebrow">{complianceResult ? "Compliance" : "List"}</p>
+                <h2>
+                  {complianceResult
+                    ? "Policy–statute compliance results"
+                    : "Browse stored policies and statutes"}
+                </h2>
                 <p className="subtitle">
-                  Review documents already stored in the privacy-compliance
-                  database. Filter locally using the list search.
+                  {complianceResult
+                    ? `${complianceResult.jurisdiction} · Policy ${complianceResult.policy_id ?? "—"}`
+                    : "Review documents already stored in the privacy-compliance database. Filter locally using the list search."}
                 </p>
               </div>
-              <div className="header-card">
-                <p className="header-card-title">Stored documents</p>
-                <p className="header-card-value">
-                  {documents.length ? documents.length : "—"}
-                </p>
-                <p className="header-card-caption">Available in this list</p>
-              </div>
+              {complianceResult ? (
+                <div className="header-card compliance-summary-strip">
+                  <p className="header-card-title">Overall</p>
+                  <p
+                    className={`header-card-value compliance-overall compliance-overall--${complianceResult.summary.overall_compliance}`}
+                  >
+                    {complianceResult.summary.overall_compliance}
+                  </p>
+                  <p className="header-card-caption">
+                    {complianceResult.summary.counts.compliant} compliant,{" "}
+                    {complianceResult.summary.counts.non_compliant} non-compliant,{" "}
+                    {complianceResult.summary.counts.neither} neither
+                  </p>
+                  <button
+                    type="button"
+                    className="ghost-button compliance-back"
+                    onClick={handleCloseComplianceResults}
+                  >
+                    Back to list
+                  </button>
+                </div>
+              ) : (
+                <div className="header-card">
+                  <p className="header-card-title">Stored documents</p>
+                  <p className="header-card-value">
+                    {documents.length ? documents.length : "—"}
+                  </p>
+                  <p className="header-card-caption">Available in this list</p>
+                </div>
+              )}
             </header>
 
+            {complianceResult ? (
+              <section className="compliance-results-panel">
+                {complianceResult.warnings.length > 0 ? (
+                  <div className="compliance-warnings">
+                    {complianceResult.warnings.map((w, i) => (
+                      <p key={i} className="compliance-warning-item">
+                        {w}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="panel-header compliance-filters">
+                  <p className="panel-title">Sections</p>
+                  <div className="compliance-filter-tabs">
+                    {(
+                      [
+                        ["all", "All"],
+                        ["compliant", "Compliant"],
+                        ["non_compliant", "Non-compliant"],
+                        ["neither", "Neither"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`mode-button ${complianceFilter === value ? "is-active" : ""}`}
+                        onClick={() => setComplianceFilter(value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="compliance-section-list">
+                  {complianceFilteredSections.length === 0 ? (
+                    <div className="empty-state">
+                      <p>No sections match the filter.</p>
+                    </div>
+                  ) : (
+                    complianceFilteredSections.map((section) => (
+                      <article
+                        key={section.section_id}
+                        className={`result-card compliance-section-card compliance-section-card--${section.compliance}`}
+                      >
+                        <div className="result-header">
+                          <div>
+                            <h3>{section.section_id}</h3>
+                            <p className="compliance-section-preview">
+                              {(section.section_text || "").slice(0, 120)}
+                              {(section.section_text?.length ?? 0) > 120 ? "…" : ""}
+                            </p>
+                          </div>
+                          <div className="score-stack">
+                            <span
+                              className={`score-pill compliance-badge compliance-badge--${section.compliance}`}
+                            >
+                              {section.compliance.replace("_", " ")}
+                            </span>
+                            <span className="score-caption">
+                              {formatConfidence(section.confidence)}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="compliance-rationale-preview">
+                          {(section.rationale || "").slice(0, 100)}
+                          {(section.rationale?.length ?? 0) > 100 ? "…" : ""}
+                        </p>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() =>
+                            setExpandedSectionId(
+                              expandedSectionId === section.section_id
+                                ? null
+                                : section.section_id
+                            )
+                          }
+                          aria-expanded={expandedSectionId === section.section_id}
+                        >
+                          {expandedSectionId === section.section_id
+                            ? "Hide details"
+                            : "Details"}
+                        </button>
+                        {expandedSectionId === section.section_id ? (
+                          <div className="compliance-section-detail">
+                            <div className="compliance-section-detail-block">
+                              <p className="compliance-detail-label">Section text</p>
+                              <div className="compliance-section-text">
+                                {section.section_text || "—"}
+                              </div>
+                            </div>
+                            <div className="compliance-section-detail-block">
+                              <p className="compliance-detail-label">Rationale</p>
+                              <p>{section.rationale || "—"}</p>
+                            </div>
+                            {section.remediation_suggestions?.length > 0 ? (
+                              <div className="compliance-section-detail-block">
+                                <p className="compliance-detail-label">Remediation suggestions</p>
+                                <ul>
+                                  {section.remediation_suggestions.map((s, i) => (
+                                    <li key={i}>{s}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+                            {section.applied_statutes?.length > 0 ? (
+                              <div className="compliance-section-detail-block">
+                                <p className="compliance-detail-label">Applied statutes</p>
+                                <div className="applied-statute-list">
+                                  {section.applied_statutes.map((statute, i) => (
+                                    <div key={i} className="applied-statute">
+                                      <p className="applied-statute-title">
+                                        {statute.statute_id} – {statute.title}
+                                      </p>
+                                      <p className="applied-statute-meta">
+                                        {statute.jurisdiction} · Evidence {formatConfidence(statute.evidence_score)}
+                                      </p>
+                                      <blockquote className="applied-statute-span">
+                                        {statute.matched_span || "—"}
+                                      </blockquote>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                            {section.retrieval_trace?.length > 0 ? (
+                              <details className="compliance-trace">
+                                <summary>Retrieval trace</summary>
+                                <ul>
+                                  {section.retrieval_trace.map((t, i) => (
+                                    <li key={i}>{t}</li>
+                                  ))}
+                                </ul>
+                              </details>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </article>
+                    ))
+                  )}
+                </div>
+              </section>
+            ) : (
             <section className="results-panel">
               <div className="panel-header list-header">
                 <div>
@@ -1206,6 +1504,15 @@ export default function App() {
                               ? "Policy"
                               : "Statute"}
                           </span>
+                          {listMode === "policy" ? (
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              onClick={() => handleOpenComplianceRun(doc)}
+                            >
+                              Run compliance
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="ghost-button"
@@ -1220,6 +1527,7 @@ export default function App() {
                 )}
               </div>
             </section>
+            )}
           </>
         )}
       </main>
@@ -1277,6 +1585,72 @@ export default function App() {
             {saveMessage ? (
               <div className="modal-footer">{saveMessage}</div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {showComplianceRunModal ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card company-name-dialog">
+            <div className="modal-header">
+              <div>
+                <p className="modal-title">Run policy–statute compliance</p>
+                <p className="modal-subtitle">
+                  {complianceRunPolicy?.title || complianceRunPolicy?.company_name
+                    ? `Policy: ${complianceRunPolicy.title || complianceRunPolicy.company_name}`
+                    : "Set policy collection and jurisdiction."}
+                </p>
+              </div>
+            </div>
+            <div className="modal-body">
+              <div className="field-group">
+                <label className="field-label" htmlFor="compliance-policy-collection">
+                  Policy collection
+                </label>
+                <input
+                  id="compliance-policy-collection"
+                  type="text"
+                  value={compliancePolicyCollection}
+                  onChange={(e) => setCompliancePolicyCollection(e.target.value)}
+                  placeholder="e.g. policy_embeddings"
+                />
+              </div>
+              <div className="field-group">
+                <label className="field-label" htmlFor="compliance-jurisdiction">
+                  Jurisdiction
+                </label>
+                <input
+                  id="compliance-jurisdiction"
+                  type="text"
+                  value={complianceJurisdiction}
+                  onChange={(e) => setComplianceJurisdiction(e.target.value)}
+                  placeholder="e.g. CA or CCPA"
+                />
+              </div>
+              {complianceError ? (
+                <div className="error-banner">
+                  <span className="error-text">{complianceError}</span>
+                </div>
+              ) : null}
+            </div>
+            <div className="modal-actions dialog-actions">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={handleCloseComplianceRunModal}
+                disabled={complianceLoading}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={handleRunCompliance}
+                disabled={complianceLoading}
+              >
+                {complianceLoading ? "Running…" : "Run compliance"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

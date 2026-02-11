@@ -6,6 +6,25 @@ import os
 from typing import Any, Tuple
 
 import requests
+
+try:
+    from backend.compliance.engine import (
+        load_config as load_compliance_config,
+        run_applicability,
+        run_drift_check,
+        run_gap_analysis,
+        run_health_score,
+        run_multi_jurisdictional,
+    )
+except ImportError:
+    from compliance.engine import (
+        load_config as load_compliance_config,
+        run_applicability,
+        run_drift_check,
+        run_gap_analysis,
+        run_health_score,
+        run_multi_jurisdictional,
+    )
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
@@ -20,6 +39,11 @@ PROXY_URL = os.getenv("PROXY_URL", "").strip()
 POLICY_DATABASE = os.getenv("POLICY_DATABASE") or "privacy-compliance"
 POLICY_COLLECTION = os.getenv("POLICY_COLLECTION") or "policies"
 STATUTE_COLLECTION = os.getenv("STATUTE_COLLECTION") or "statutes"
+POLICY_CHUNK_COLLECTION = os.getenv("POLICY_CHUNK_COLLECTION") or "policy_chunks"
+STATUTE_CHUNK_COLLECTION = os.getenv("STATUTE_CHUNK_COLLECTION") or "statute_chunks"
+COMPLIANCE_RESULTS_COLLECTION = "compliance_results"
+COMPLIANCE_ALERTS_COLLECTION = "compliance_alerts"
+COMPLIANCE_RUN_LOG_COLLECTION = "compliance_run_log"
 
 STATIC_FOLDER = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 
@@ -452,6 +476,241 @@ def vector_index() -> Any:
         message, status = error
         return jsonify({"error": message}), status
     return jsonify(data)
+
+
+@app.route("/api/vector-search", methods=["POST"])
+def vector_search() -> Any:
+    """Proxy vector search requests to the upstream API (query embedding, filter by metadata, return top-k chunks)."""
+    payload = request.get_json(silent=True) or {}
+    index_database_name = str(payload.get("index_database_name", "")).strip()
+    index_collection_name = str(payload.get("index_collection_name", "")).strip()
+    query_text = payload.get("query_text")
+    query_embedding = payload.get("query_embedding")
+    if not index_database_name or not index_collection_name:
+        return jsonify({
+            "error": "index_database_name and index_collection_name are required."
+        }), 400
+    if query_text is None and query_embedding is None:
+        return jsonify({"error": "query_text or query_embedding is required."}), 400
+
+    proxy_payload: dict[str, Any] = {
+        "index_database_name": index_database_name,
+        "index_collection_name": index_collection_name,
+    }
+    if query_text is not None:
+        proxy_payload["query_text"] = query_text
+    if query_embedding is not None:
+        proxy_payload["query_embedding"] = query_embedding
+    if "filter" in payload:
+        f = payload["filter"]
+        if isinstance(f, (dict, list)):
+            proxy_payload["filter"] = json.dumps(f) if isinstance(f, dict) else f
+        else:
+            proxy_payload["filter"] = f
+    if "top_k" in payload:
+        proxy_payload["top_k"] = int(payload["top_k"]) if payload["top_k"] is not None else 20
+
+    data, error = forward_post("/vector-search", proxy_payload)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+def _write_compliance_document(collection: str, document: dict[str, Any]) -> None:
+    """Persist a document to the compliance results/alerts/run_log collection."""
+    forward_post(
+        "/write_to_collection",
+        {
+            "database_name": POLICY_DATABASE,
+            "collection_name": collection,
+            "document": document,
+            "mode": "append",
+        },
+    )
+
+
+@app.route("/api/compliance/policy-statute-compliance", methods=["POST"])
+def compliance_policy_statute_compliance() -> Any:
+    """Proxy policy-statute compliance to the upstream Web Gather API."""
+    payload = request.get_json(silent=True) or {}
+    policy_id = str(payload.get("policy_id", "")).strip()
+    policy_collection = str(payload.get("policy_collection", "")).strip()
+    jurisdiction = str(payload.get("jurisdiction", "")).strip()
+    if not policy_id:
+        return jsonify({"error": "policy_id is required."}), 400
+    if not policy_collection:
+        return jsonify({"error": "policy_collection is required."}), 400
+    if not jurisdiction:
+        return jsonify({"error": "jurisdiction is required."}), 400
+    body = {
+        "policy_id": policy_id,
+        "policy_collection": policy_collection,
+        "jurisdiction": jurisdiction,
+    }
+    data, error = forward_post("/api/compliance/policy-statute-compliance", body)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/compliance/applicability", methods=["POST"])
+def compliance_applicability() -> Any:
+    """Determine applicable jurisdictions for a policy (SLM)."""
+    payload = request.get_json(silent=True) or {}
+    policy_document_id = str(payload.get("policy_document_id", "")).strip()
+    if not policy_document_id:
+        return jsonify({"error": "policy_document_id is required."}), 400
+    config = load_compliance_config()
+    result = run_applicability(
+        forward_post,
+        forward_get,
+        POLICY_DATABASE,
+        POLICY_COLLECTION,
+        POLICY_CHUNK_COLLECTION,
+        policy_document_id,
+    )
+    return jsonify(result)
+
+
+@app.route("/api/compliance/gap-analysis", methods=["POST"])
+def compliance_gap_analysis() -> Any:
+    """Run gap analysis: policy vs statute chunks, return gaps and summary."""
+    payload = request.get_json(silent=True) or {}
+    policy_document_id = str(payload.get("policy_document_id", "")).strip()
+    if not policy_document_id:
+        return jsonify({"error": "policy_document_id is required."}), 400
+    applicable_jurisdictions = payload.get("applicable_jurisdictions")
+    if isinstance(applicable_jurisdictions, list):
+        applicable_jurisdictions = [str(j) for j in applicable_jurisdictions]
+    else:
+        applicable_jurisdictions = None
+    config = load_compliance_config()
+    index_db = payload.get("index_database_name") or config.get("index_database_name")
+    index_coll = payload.get("index_collection_name") or config.get("index_collection_name")
+    result = run_gap_analysis(
+        forward_post,
+        forward_get,
+        POLICY_DATABASE,
+        POLICY_COLLECTION,
+        POLICY_CHUNK_COLLECTION,
+        STATUTE_COLLECTION,
+        STATUTE_CHUNK_COLLECTION,
+        policy_document_id,
+        applicable_jurisdictions=applicable_jurisdictions,
+        config=config,
+        index_database_name=index_db,
+        index_collection_name=index_coll,
+    )
+    if payload.get("save_results"):
+        doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}
+        _write_compliance_document(COMPLIANCE_RESULTS_COLLECTION, doc)
+    return jsonify(result)
+
+
+@app.route("/api/compliance/multi-jurisdictional", methods=["POST"])
+def compliance_multi_jurisdictional() -> Any:
+    """Run strictest common denominator and conflict detection."""
+    payload = request.get_json(silent=True) or {}
+    applicable_jurisdictions = payload.get("applicable_jurisdictions")
+    if not applicable_jurisdictions or not isinstance(applicable_jurisdictions, list):
+        return jsonify({"error": "applicable_jurisdictions (array) is required."}), 400
+    applicable_jurisdictions = [str(j) for j in applicable_jurisdictions]
+    policy_document_id = str(payload.get("policy_document_id", "")).strip() or None
+    config = load_compliance_config()
+    index_db = payload.get("index_database_name") or config.get("index_database_name")
+    index_coll = payload.get("index_collection_name") or config.get("index_collection_name")
+    result = run_multi_jurisdictional(
+        forward_post,
+        forward_get,
+        POLICY_DATABASE,
+        STATUTE_COLLECTION,
+        STATUTE_CHUNK_COLLECTION,
+        applicable_jurisdictions,
+        policy_document_id=policy_document_id,
+        policy_collection=POLICY_COLLECTION,
+        policy_chunk_collection=POLICY_CHUNK_COLLECTION,
+        config=config,
+        index_database_name=index_db,
+        index_collection_name=index_coll,
+    )
+    return jsonify(result)
+
+
+@app.route("/api/compliance/health-score", methods=["POST"])
+def compliance_health_score() -> Any:
+    """Compute Privacy Health Score (0-100) for a policy."""
+    payload = request.get_json(silent=True) or {}
+    policy_document_id = str(payload.get("policy_document_id", "")).strip()
+    if not policy_document_id:
+        return jsonify({"error": "policy_document_id is required."}), 400
+    applicable_jurisdictions = payload.get("applicable_jurisdictions")
+    if isinstance(applicable_jurisdictions, list):
+        applicable_jurisdictions = [str(j) for j in applicable_jurisdictions]
+    else:
+        applicable_jurisdictions = None
+    config = load_compliance_config()
+    index_db = payload.get("index_database_name") or config.get("index_database_name")
+    index_coll = payload.get("index_collection_name") or config.get("index_collection_name")
+    result = run_health_score(
+        forward_post,
+        forward_get,
+        POLICY_DATABASE,
+        POLICY_COLLECTION,
+        POLICY_CHUNK_COLLECTION,
+        STATUTE_COLLECTION,
+        STATUTE_CHUNK_COLLECTION,
+        policy_document_id,
+        applicable_jurisdictions=applicable_jurisdictions,
+        gap_result=None,
+        config=config,
+        index_database_name=index_db,
+        index_collection_name=index_coll,
+    )
+    if payload.get("save_results"):
+        doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}
+        _write_compliance_document(COMPLIANCE_RESULTS_COLLECTION, doc)
+    return jsonify(result)
+
+
+@app.route("/api/compliance/drift-check", methods=["POST"])
+def compliance_drift_check() -> Any:
+    """Re-run analysis and emit regulatory drift alerts."""
+    payload = request.get_json(silent=True) or {}
+    since = str(payload.get("since", "")).strip() or None
+    policy_document_ids = payload.get("policy_document_ids")
+    if isinstance(policy_document_ids, list):
+        policy_document_ids = [str(pid) for pid in policy_document_ids]
+    else:
+        policy_document_ids = None
+    config = load_compliance_config()
+    index_db = payload.get("index_database_name") or config.get("index_database_name")
+    index_coll = payload.get("index_collection_name") or config.get("index_collection_name")
+
+    def write_alert(alert: dict[str, Any]) -> None:
+        _write_compliance_document(COMPLIANCE_ALERTS_COLLECTION, alert)
+
+    result = run_drift_check(
+        forward_post,
+        forward_get,
+        POLICY_DATABASE,
+        POLICY_COLLECTION,
+        POLICY_CHUNK_COLLECTION,
+        STATUTE_COLLECTION,
+        STATUTE_CHUNK_COLLECTION,
+        results_collection=COMPLIANCE_RESULTS_COLLECTION,
+        alerts_collection=COMPLIANCE_ALERTS_COLLECTION,
+        since=since,
+        policy_document_ids=policy_document_ids,
+        config=config,
+        index_database_name=index_db,
+        index_collection_name=index_coll,
+        write_alert=write_alert,
+    )
+    if payload.get("save_run_log"):
+        _write_compliance_document(COMPLIANCE_RUN_LOG_COLLECTION, result)
+    return jsonify(result)
 
 
 @app.route("/")
