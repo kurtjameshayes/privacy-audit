@@ -1367,6 +1367,9 @@ export default function App() {
                     {isLoadingDocuments
                       ? "Loading documents…"
                       : `${filteredDocuments.length} of ${documents.length} documents shown.`}
+                    {listMode === "policy" && documents.length > 0
+                      ? " Use “Run compliance” on a policy to compare it to statutes."
+                      : ""}
                   </p>
                 </div>
                 <div className="mode-toggle">

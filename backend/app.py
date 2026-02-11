@@ -7,6 +7,16 @@ from typing import Any, Tuple
 
 import requests
 
+# #region agent log
+DEBUG_LOG_PATH = os.path.join(os.path.dirname(__file__), "..", ".cursor", "debug.log")
+def _debug_log(location: str, message: str, data: dict[str, Any], hypothesis_id: str, run_id: str = "run1") -> None:
+    try:
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"id": f"log_{id(f)}", "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000), "location": location, "message": message, "data": data, "runId": run_id, "hypothesisId": hypothesis_id}) + "\n")
+    except Exception:
+        pass
+# #endregion
+
 try:
     from backend.compliance.engine import (
         load_config as load_compliance_config,
@@ -97,6 +107,9 @@ def forward_get(
             url, params=params, headers=api_headers(), timeout=60
         )
     except requests.RequestException as exc:
+        # #region agent log
+        _debug_log("app.py:forward_get", "RequestException in forward_get", {"endpoint": endpoint, "exc_type": type(exc).__name__, "returning_status": 502, "message_is_raw_exc": True}, "H2")
+        # #endregion
         return None, (str(exc), 502)
 
     if response.status_code >= 400:
@@ -286,6 +299,9 @@ def list_documents() -> Any:
     database_name = str(payload.get("database_name", "")).strip()
     collection_name = str(payload.get("collection_name", "")).strip()
     query = payload.get("query")
+    # #region agent log
+    _debug_log("app.py:list_documents", "list_documents entry", {"database_name": database_name, "collection_name": collection_name, "API_BASE_URL_set": bool(API_BASE_URL), "API_BASE_URL_host": (API_BASE_URL.split("//")[-1].split("/")[0].split(":")[0] if API_BASE_URL else None), "API_BASE_URL_port": (API_BASE_URL.split(":")[-1].split("/")[0] if API_BASE_URL and ":" in API_BASE_URL.split("//")[-1] else None)}, "H1")
+    # #endregion
 
     if not database_name or not collection_name:
         return jsonify({
@@ -308,6 +324,9 @@ def list_documents() -> Any:
     )
     if error:
         message, status = error
+        # #region agent log
+        _debug_log("app.py:list_documents", "forward_get error returned to client", {"status": status, "message_len": len(str(message)), "message_preview": str(message)[:200], "is_connection_error": "Connection refused" in str(message) or "Max retries" in str(message)}, "H2")
+        # #endregion
         return jsonify({"error": message}), status
     return jsonify(data)
 
