@@ -78,7 +78,7 @@ def forward_post(endpoint: str, payload: dict[str, Any]) -> Tuple[Any, Tuple[str
     try:
         response = requests.post(url, json=payload, headers=api_headers(), timeout=60)
     except requests.RequestException as exc:
-        return None, (str(exc), 502)
+        return None, ("Upstream service unavailable. Check that the service at GATHER_API_BASE_URL is running.", 502)
 
     if response.status_code >= 400:
         try:
@@ -108,9 +108,9 @@ def forward_get(
         )
     except requests.RequestException as exc:
         # #region agent log
-        _debug_log("app.py:forward_get", "RequestException in forward_get", {"endpoint": endpoint, "exc_type": type(exc).__name__, "returning_status": 502, "message_is_raw_exc": True}, "H2")
+        _debug_log("app.py:forward_get", "RequestException in forward_get", {"endpoint": endpoint, "exc_type": type(exc).__name__, "returning_status": 502, "message_is_raw_exc": False}, "H2")
         # #endregion
-        return None, (str(exc), 502)
+        return None, ("Upstream service unavailable. Check that the service at GATHER_API_BASE_URL is running.", 502)
 
     if response.status_code >= 400:
         try:
@@ -139,7 +139,7 @@ def forward_delete(
             url, params=params, headers=api_headers(), timeout=60
         )
     except requests.RequestException as exc:
-        return None, (str(exc), 502)
+        return None, ("Upstream service unavailable. Check that the service at GATHER_API_BASE_URL is running.", 502)
 
     if response.status_code >= 400:
         try:
