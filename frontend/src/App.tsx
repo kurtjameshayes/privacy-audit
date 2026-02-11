@@ -108,6 +108,23 @@ const POLICY_CHUNK_COLLECTION = "policy_chunks";
 const DEFAULT_POLICY_COLLECTION = "policy_embeddings";
 const STATUTE_CHUNK_COLLECTION = "statute_chunks";
 
+/** Truncate text at a paragraph/sentence/word boundary so we never cut mid-paragraph. */
+function truncateAtBoundary(text: string, maxLen: number): string {
+  if (!text || text.length <= maxLen) return text;
+  const segment = text.slice(0, maxLen + 1);
+  const paragraphBreak = segment.lastIndexOf("\n\n");
+  const lineBreak = segment.lastIndexOf("\n");
+  const sentenceEnd = Math.max(
+    segment.lastIndexOf(". "),
+    segment.lastIndexOf("! "),
+    segment.lastIndexOf("? ")
+  );
+  const wordBreak = segment.lastIndexOf(" ");
+  const cut = Math.max(paragraphBreak, lineBreak, sentenceEnd, wordBreak, 0);
+  if (cut === 0) return segment.slice(0, maxLen).trimEnd() + "…";
+  return segment.slice(0, cut).trimEnd() + "…";
+}
+
 const extractResponseArray = (data: unknown): unknown[] => {
   if (Array.isArray(data)) {
     return data;
@@ -548,6 +565,30 @@ export default function App() {
     const pct = value <= 1 ? value * 100 : value;
     return `${Math.round(pct)}%`;
   };
+
+  const formatStatuteCitation = (statute: AppliedStatute): string => {
+    const j = statute.jurisdiction || "";
+    const id = statute.statute_id || "";
+    const sub = statute.section_id ? `(${statute.section_id})` : "";
+    return `${j} CCPA §${id}${sub}`;
+  };
+
+  const complianceRemediationSuggestions = useMemo(() => {
+    if (!complianceResult?.sections) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const s of complianceResult.sections) {
+      if (s.compliance !== "non_compliant" && s.compliance !== "neither") continue;
+      for (const r of s.remediation_suggestions || []) {
+        const t = r.trim();
+        if (t && !seen.has(t)) {
+          seen.add(t);
+          out.push(t);
+        }
+      }
+    }
+    return out;
+  }, [complianceResult?.sections]);
 
   const handleOpenParse = (doc: DocumentRecord) => {
     const documentId = getDocumentId(doc);
@@ -1192,11 +1233,17 @@ export default function App() {
                   >
                     {complianceResult.summary.overall_compliance}
                   </p>
-                  <p className="header-card-caption">
-                    {complianceResult.summary.counts.compliant} compliant,{" "}
-                    {complianceResult.summary.counts.non_compliant} non-compliant,{" "}
-                    {complianceResult.summary.counts.neither} neither
-                  </p>
+                  <div className="compliance-summary-badges">
+                    <span className="compliance-summary-badge compliance-badge--compliant">
+                      {complianceResult.summary.counts.compliant} compliant
+                    </span>
+                    <span className="compliance-summary-badge compliance-badge--non_compliant">
+                      {complianceResult.summary.counts.non_compliant} non-compliant
+                    </span>
+                    <span className="compliance-summary-badge compliance-badge--neither">
+                      {complianceResult.summary.counts.neither} neither
+                    </span>
+                  </div>
                   <button
                     type="button"
                     className="ghost-button compliance-back"
@@ -1227,6 +1274,16 @@ export default function App() {
                     ))}
                   </div>
                 ) : null}
+                {complianceRemediationSuggestions.length > 0 ? (
+                  <div className="compliance-remediation-panel">
+                    <p className="compliance-remediation-title">Remediation recommendations</p>
+                    <ol className="compliance-remediation-list">
+                      {complianceRemediationSuggestions.map((suggestion, i) => (
+                        <li key={i}>{suggestion}</li>
+                      ))}
+                    </ol>
+                  </div>
+                ) : null}
                 <div className="panel-header compliance-filters">
                   <p className="panel-title">Sections</p>
                   <div className="compliance-filter-tabs">
@@ -1255,18 +1312,30 @@ export default function App() {
                       <p>No sections match the filter.</p>
                     </div>
                   ) : (
-                    complianceFilteredSections.map((section) => (
+                    complianceFilteredSections.map((section) => {
+                      const primaryStatute =
+                        section.applied_statutes?.length > 0
+                          ? [...section.applied_statutes].sort(
+                              (a, b) => (b.evidence_score ?? 0) - (a.evidence_score ?? 0)
+                            )[0]
+                          : null;
+                      return (
                       <article
                         key={section.section_id}
                         className={`result-card compliance-section-card compliance-section-card--${section.compliance}`}
                       >
                         <div className="result-header">
                           <div>
-                            <h3>{section.section_id}</h3>
-                            <p className="compliance-section-preview">
-                              {(section.section_text || "").slice(0, 120)}
-                              {(section.section_text?.length ?? 0) > 120 ? "…" : ""}
-                            </p>
+                            <h3>
+                              {primaryStatute
+                                ? formatStatuteCitation(primaryStatute)
+                                : section.section_id}
+                            </h3>
+                            {primaryStatute?.title ? (
+                              <p className="compliance-statute-description">
+                                {primaryStatute.title}
+                              </p>
+                            ) : null}
                           </div>
                           <div className="score-stack">
                             <span
@@ -1279,9 +1348,14 @@ export default function App() {
                             </span>
                           </div>
                         </div>
-                        <p className="compliance-rationale-preview">
-                          {(section.rationale || "").slice(0, 100)}
-                          {(section.rationale?.length ?? 0) > 100 ? "…" : ""}
+                        <p className="compliance-rationale-block">
+                          {section.compliance === "compliant" && "Compliant: "}
+                          {section.compliance === "non_compliant" && "Non-compliant: "}
+                          {section.compliance === "neither" && "Neither compliant nor non-compliant: "}
+                          {section.rationale || "—"}
+                        </p>
+                        <p className="compliance-section-preview">
+                          {truncateAtBoundary(section.section_text || "", 120)}
                         </p>
                         <button
                           type="button"
@@ -1354,7 +1428,8 @@ export default function App() {
                           </div>
                         ) : null}
                       </article>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </section>
