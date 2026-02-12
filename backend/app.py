@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
+import uuid
 from typing import Any, Tuple
 
 import requests
@@ -26,6 +27,13 @@ try:
         run_health_score,
         run_multi_jurisdictional,
     )
+    from backend.workflow import (
+        assert_policy_ready_for_compliance,
+        assert_statute_indexed_for_jurisdiction,
+        backfill_workflow_state,
+        get_workflow_state,
+        upsert_workflow_state,
+    )
 except ImportError:
     from compliance.engine import (
         load_config as load_compliance_config,
@@ -35,11 +43,20 @@ except ImportError:
         run_health_score,
         run_multi_jurisdictional,
     )
+    from workflow import (
+        assert_policy_ready_for_compliance,
+        assert_statute_indexed_for_jurisdiction,
+        backfill_workflow_state,
+        get_workflow_state,
+        upsert_workflow_state,
+    )
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-load_dotenv()
+# Load .env from project root so GATHER_API_BASE_URL is always from this file (override existing env)
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+load_dotenv(os.path.join(_project_root, ".env"), override=True)
 
 APP_PROMPTS_FOLDER = os.path.join(os.path.dirname(__file__), "..", "app_prompts")
 
@@ -75,9 +92,15 @@ def forward_post(endpoint: str, payload: dict[str, Any]) -> Tuple[Any, Tuple[str
         return None, ("FIRECRAWL_API_KEY is not set.", 500)
 
     url = f"{API_BASE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
+    # #region agent log
+    _debug_log("app.py:forward_post", "forward_post request", {"url": url, "endpoint": endpoint, "payload_keys": list(payload.keys())}, "H3")
+    # #endregion
     try:
         response = requests.post(url, json=payload, headers=api_headers(), timeout=60)
     except requests.RequestException as exc:
+        # #region agent log
+        _debug_log("app.py:forward_post", "RequestException in forward_post", {"endpoint": endpoint, "exc_type": type(exc).__name__, "exc_message": str(exc), "url": url, "returning_status": 502}, "H2")
+        # #endregion
         return None, ("Upstream service unavailable. Check that the service at GATHER_API_BASE_URL is running.", 502)
 
     if response.status_code >= 400:
@@ -102,13 +125,16 @@ def forward_get(
         return None, ("FIRECRAWL_API_KEY is not set.", 500)
 
     url = f"{API_BASE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
+    # #region agent log
+    _debug_log("app.py:forward_get", "forward_get request", {"url": url, "params": params, "endpoint": endpoint}, "H3")
+    # #endregion
     try:
         response = requests.get(
             url, params=params, headers=api_headers(), timeout=60
         )
     except requests.RequestException as exc:
         # #region agent log
-        _debug_log("app.py:forward_get", "RequestException in forward_get", {"endpoint": endpoint, "exc_type": type(exc).__name__, "returning_status": 502, "message_is_raw_exc": False}, "H2")
+        _debug_log("app.py:forward_get", "RequestException in forward_get", {"endpoint": endpoint, "exc_type": type(exc).__name__, "exc_message": str(exc), "url": url, "returning_status": 502}, "H2")
         # #endregion
         return None, ("Upstream service unavailable. Check that the service at GATHER_API_BASE_URL is running.", 502)
 
@@ -239,7 +265,9 @@ def save_policy() -> Any:
     if mode == "statute" and not jurisdiction:
         return jsonify({"error": "Jurisdiction is required for statutes."}), 400
 
+    document_id = str(uuid.uuid4())
     document = {
+        "document_id": document_id,
         "source_url": url,
         "title": payload.get("title"),
         "description": payload.get("description"),
@@ -269,6 +297,20 @@ def save_policy() -> Any:
         message, status = error
         return jsonify({"error": message}), status
 
+    if document_id:
+        doc_type = "statute" if mode == "statute" else "policy"
+        wf_coll = load_compliance_config().get("workflow_state_collection", "document_workflow_state")
+        upsert_workflow_state(
+            forward_get,
+            forward_post,
+            forward_delete,
+            POLICY_DATABASE,
+            document_id,
+            doc_type,
+            "gathered",
+            wf_coll,
+        )
+
     # Also save to companies collection if company_name is provided
     if company_name:
         company_document = {
@@ -289,7 +331,10 @@ def save_policy() -> Any:
     message = f"Saved to {mode} collection."
     if isinstance(data, dict) and data.get("message"):
         message = data["message"]
-    return jsonify({"message": message, "data": data})
+    response_data = {"message": message, "data": data}
+    if document_id:
+        response_data["document_id"] = document_id
+    return jsonify(response_data)
 
 
 @app.route("/api/documents", methods=["POST"])
@@ -344,18 +389,17 @@ def parse_llm() -> Any:
             "error": "database_name, collection_name, document_id, and prompt are required."
         }), 400
 
-    data, error = forward_post(
-        "/parse-llm",
-        {
-            "database": database_name,
-            "collection": collection_name,
-            "parse_prompt": prompt,
-            "database_name": database_name,
-            "collection_name": collection_name,
-            "document_id": document_id,
-            "prompt": prompt,
-        },
-    )
+    parse_llm_body = {
+        "database": database_name,
+        "collection": collection_name,
+        "parse_prompt": prompt,
+        "database_name": database_name,
+        "collection_name": collection_name,
+        "document_id": document_id,
+        "prompt": prompt,
+    }
+
+    data, error = forward_post("/parse-llm", parse_llm_body)
     if error:
         message, status = error
         return jsonify({"error": message}), status
@@ -449,6 +493,19 @@ def save_parsed_document() -> Any:
             return jsonify({"error": message}), status
         saved_records.append(data)
 
+    wf_coll = load_compliance_config().get("workflow_state_collection", "document_workflow_state")
+    doc_type = "statute" if collection_name == "statute_chunks" else "policy"
+    upsert_workflow_state(
+        forward_get,
+        forward_post,
+        forward_delete,
+        database_name,
+        document_id,
+        doc_type,
+        "parsed",
+        wf_coll,
+    )
+
     return jsonify({
         "message": f"Saved {len(saved_records)} parsed sections.",
         "data": saved_records,
@@ -494,6 +551,45 @@ def vector_index() -> Any:
     if error:
         message, status = error
         return jsonify({"error": message}), status
+
+    document_ids = payload.get("document_ids")
+    if document_ids and isinstance(document_ids, list):
+        wf_coll = load_compliance_config().get("workflow_state_collection", "document_workflow_state")
+        doc_type = "statute" if "statute" in source_collection_name.lower() else "policy"
+        for doc_id in document_ids:
+            if doc_id:
+                upsert_workflow_state(
+                    forward_get,
+                    forward_post,
+                    forward_delete,
+                    source_database_name,
+                    str(doc_id),
+                    doc_type,
+                    "vector_indexed",
+                    wf_coll,
+                )
+    else:
+        sq = source_query
+        if isinstance(sq, str):
+            try:
+                sq = json.loads(sq)
+            except (json.JSONDecodeError, TypeError):
+                sq = None
+        if sq and isinstance(sq, dict) and sq.get("document_id"):
+            doc_id = str(sq["document_id"])
+            wf_coll = load_compliance_config().get("workflow_state_collection", "document_workflow_state")
+            doc_type = "statute" if "statute" in source_collection_name.lower() else "policy"
+            upsert_workflow_state(
+                forward_get,
+                forward_post,
+                forward_delete,
+                source_database_name,
+                doc_id,
+                doc_type,
+                "vector_indexed",
+                wf_coll,
+            )
+
     return jsonify(data)
 
 
@@ -536,6 +632,54 @@ def vector_search() -> Any:
     return jsonify(data)
 
 
+@app.route("/api/workflow/backfill", methods=["POST"])
+def workflow_backfill() -> Any:
+    """Backfill workflow state for existing policies and statutes."""
+    config = load_compliance_config()
+    result = backfill_workflow_state(
+        forward_get,
+        forward_post,
+        forward_delete,
+        POLICY_DATABASE,
+        POLICY_COLLECTION,
+        STATUTE_COLLECTION,
+        POLICY_CHUNK_COLLECTION,
+        STATUTE_CHUNK_COLLECTION,
+        config.get("policy_index_collection_name", "policy_embeddings"),
+        config.get("index_collection_name", "statute_embeddings"),
+        config.get("workflow_state_collection", "document_workflow_state"),
+    )
+    return jsonify(result)
+
+
+@app.route("/api/documents/<document_id>/workflow-state", methods=["GET"])
+def get_document_workflow_state(document_id: str) -> Any:
+    """Get workflow state for a document. Query param: document_type=policy|statute."""
+    document_type = request.args.get("document_type", "policy").strip()
+    if document_type not in ("policy", "statute"):
+        return jsonify({"error": "document_type must be policy or statute"}), 400
+    wf_coll = load_compliance_config().get("workflow_state_collection", "document_workflow_state")
+    state = get_workflow_state(
+        forward_get,
+        POLICY_DATABASE,
+        document_id,
+        document_type,
+        wf_coll,
+    )
+    if not state:
+        return jsonify({
+            "document_id": document_id,
+            "document_type": document_type,
+            "steps": {
+                "gathered": {"completed": False, "completed_at": None},
+                "parsed": {"completed": False, "completed_at": None},
+                "vector_indexed": {"completed": False, "completed_at": None},
+            },
+            "ready_for_compliance": False,
+        })
+    return jsonify(state)
+
+
 def _write_compliance_document(collection: str, document: dict[str, Any]) -> None:
     """Persist a document to the compliance results/alerts/run_log collection."""
     forward_post(
@@ -547,6 +691,11 @@ def _write_compliance_document(collection: str, document: dict[str, Any]) -> Non
             "mode": "append",
         },
     )
+
+
+def _workflow_collection() -> str:
+    config = load_compliance_config()
+    return config.get("workflow_state_collection", "document_workflow_state")
 
 
 @app.route("/api/compliance/policy-statute-compliance", methods=["POST"])
@@ -562,12 +711,152 @@ def compliance_policy_statute_compliance() -> Any:
         return jsonify({"error": "policy_collection is required."}), 400
     if not jurisdiction:
         return jsonify({"error": "jurisdiction is required."}), 400
+    guard_err = assert_policy_ready_for_compliance(
+        forward_get, POLICY_DATABASE, policy_id, _workflow_collection()
+    )
+    if guard_err:
+        return jsonify(guard_err), 409
     body = {
         "policy_id": policy_id,
         "policy_collection": policy_collection,
         "jurisdiction": jurisdiction,
     }
     data, error = forward_post("/api/compliance/policy-statute-compliance", body)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/compliance/citations", methods=["POST"])
+def compliance_citations() -> Any:
+    """Proxy statute-policy citation extraction to upstream."""
+    payload = request.get_json(silent=True) or {}
+    policy_document_id = str(payload.get("policy_document_id", "")).strip()
+    if not policy_document_id:
+        return jsonify({"error": "policy_document_id is required."}), 400
+    guard_err = assert_policy_ready_for_compliance(
+        forward_get, POLICY_DATABASE, policy_document_id, _workflow_collection()
+    )
+    if guard_err:
+        return jsonify(guard_err), 409
+    body = {
+        "policy_document_id": policy_document_id,
+        "applicable_jurisdictions": payload.get("applicable_jurisdictions"),
+    }
+    data, error = forward_post("/api/compliance/citations", body)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/compliance/report", methods=["POST"])
+def compliance_report() -> Any:
+    """Proxy compliance report generation to upstream."""
+    payload = request.get_json(silent=True) or {}
+    policy_document_id = str(payload.get("policy_document_id", "")).strip()
+    format_type = str(payload.get("format", "markdown")).strip() or "markdown"
+    if not policy_document_id:
+        return jsonify({"error": "policy_document_id is required."}), 400
+    guard_err = assert_policy_ready_for_compliance(
+        forward_get, POLICY_DATABASE, policy_document_id, _workflow_collection()
+    )
+    if guard_err:
+        return jsonify(guard_err), 409
+    body = {
+        "policy_document_id": policy_document_id,
+        "format": format_type if format_type in ("markdown", "pdf") else "markdown",
+        "source": payload.get("source", "latest_stored"),
+        "applicable_jurisdictions": payload.get("applicable_jurisdictions"),
+        "include_gap": payload.get("include_gap", True),
+        "include_health_score": payload.get("include_health_score", True),
+        "include_multi_jurisdictional": payload.get("include_multi_jurisdictional", False),
+    }
+    data, error = forward_post("/api/compliance/report", body)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/compliance/risk-assessment", methods=["POST"])
+def compliance_risk_assessment() -> Any:
+    """Proxy risk assessment to upstream."""
+    payload = request.get_json(silent=True) or {}
+    policy_document_id = str(payload.get("policy_document_id", "")).strip()
+    if not policy_document_id:
+        return jsonify({"error": "policy_document_id is required."}), 400
+    guard_err = assert_policy_ready_for_compliance(
+        forward_get, POLICY_DATABASE, policy_document_id, _workflow_collection()
+    )
+    if guard_err:
+        return jsonify(guard_err), 409
+    body = {
+        "policy_document_id": policy_document_id,
+        "applicable_jurisdictions": payload.get("applicable_jurisdictions"),
+        "template_id": payload.get("template_id"),
+        "include_report": payload.get("include_report", False),
+    }
+    data, error = forward_post("/api/compliance/risk-assessment", body)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/compliance/risk-assessment/templates", methods=["GET"])
+def compliance_risk_assessment_templates() -> Any:
+    """Proxy risk assessment templates list to upstream."""
+    data, error = forward_get("/api/compliance/risk-assessment/templates", {})
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/compliance/alerts", methods=["GET"])
+def compliance_alerts() -> Any:
+    """Proxy drift alerts list to upstream."""
+    params = {
+        "policy_document_id": request.args.get("policy_document_id", ""),
+        "company_name": request.args.get("company_name", ""),
+        "jurisdiction": request.args.get("jurisdiction", ""),
+        "since": request.args.get("since", ""),
+        "limit": request.args.get("limit", "50"),
+        "offset": request.args.get("offset", "0"),
+    }
+    params = {k: v for k, v in params.items() if v}
+    data, error = forward_get("/api/compliance/alerts", params)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/compliance/runs", methods=["GET"])
+def compliance_runs() -> Any:
+    """Proxy compliance runs list to upstream."""
+    params = {
+        "policy_document_id": request.args.get("policy_document_id", ""),
+        "since": request.args.get("since", ""),
+        "until": request.args.get("until", ""),
+        "limit": request.args.get("limit", "50"),
+        "offset": request.args.get("offset", "0"),
+        "types": request.args.get("types", ""),
+    }
+    params = {k: v for k, v in params.items() if v}
+    data, error = forward_get("/api/compliance/runs", params)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/compliance/runs/<run_id>", methods=["GET"])
+def compliance_run_detail(run_id: str) -> Any:
+    """Proxy single compliance run detail to upstream."""
+    data, error = forward_get(f"/api/compliance/runs/{run_id}", {})
     if error:
         message, status = error
         return jsonify({"error": message}), status
@@ -581,6 +870,11 @@ def compliance_applicability() -> Any:
     policy_document_id = str(payload.get("policy_document_id", "")).strip()
     if not policy_document_id:
         return jsonify({"error": "policy_document_id is required."}), 400
+    guard_err = assert_policy_ready_for_compliance(
+        forward_get, POLICY_DATABASE, policy_document_id, _workflow_collection()
+    )
+    if guard_err:
+        return jsonify(guard_err), 409
     config = load_compliance_config()
     result = run_applicability(
         forward_post,
@@ -589,6 +883,16 @@ def compliance_applicability() -> Any:
         POLICY_COLLECTION,
         POLICY_CHUNK_COLLECTION,
         policy_document_id,
+    )
+    _debug_log(
+        "app.py:compliance_applicability",
+        "applicability result",
+        {
+            "policy_document_id": policy_document_id,
+            "applicable_jurisdictions": result.get("applicable_jurisdictions", []),
+            "error": result.get("error"),
+        },
+        "H3",
     )
     return jsonify(result)
 
@@ -600,6 +904,11 @@ def compliance_gap_analysis() -> Any:
     policy_document_id = str(payload.get("policy_document_id", "")).strip()
     if not policy_document_id:
         return jsonify({"error": "policy_document_id is required."}), 400
+    guard_err = assert_policy_ready_for_compliance(
+        forward_get, POLICY_DATABASE, policy_document_id, _workflow_collection()
+    )
+    if guard_err:
+        return jsonify(guard_err), 409
     applicable_jurisdictions = payload.get("applicable_jurisdictions")
     if isinstance(applicable_jurisdictions, list):
         applicable_jurisdictions = [str(j) for j in applicable_jurisdictions]
@@ -608,6 +917,20 @@ def compliance_gap_analysis() -> Any:
     config = load_compliance_config()
     index_db = payload.get("index_database_name") or config.get("index_database_name")
     index_coll = payload.get("index_collection_name") or config.get("index_collection_name")
+    jurisdictions = applicable_jurisdictions or config.get("default_jurisdictions", ["CA", "VA"])
+    statute_guard = assert_statute_indexed_for_jurisdiction(
+        forward_get,
+        forward_post,
+        POLICY_DATABASE,
+        STATUTE_COLLECTION,
+        STATUTE_CHUNK_COLLECTION,
+        jurisdictions,
+        index_db,
+        index_coll,
+        _workflow_collection(),
+    )
+    if statute_guard:
+        return jsonify(statute_guard), 409
     result = run_gap_analysis(
         forward_post,
         forward_get,
@@ -640,6 +963,25 @@ def compliance_multi_jurisdictional() -> Any:
     config = load_compliance_config()
     index_db = payload.get("index_database_name") or config.get("index_database_name")
     index_coll = payload.get("index_collection_name") or config.get("index_collection_name")
+    statute_guard = assert_statute_indexed_for_jurisdiction(
+        forward_get,
+        forward_post,
+        POLICY_DATABASE,
+        STATUTE_COLLECTION,
+        STATUTE_CHUNK_COLLECTION,
+        applicable_jurisdictions,
+        index_db,
+        index_coll,
+        _workflow_collection(),
+    )
+    if statute_guard:
+        return jsonify(statute_guard), 409
+    if policy_document_id:
+        guard_err = assert_policy_ready_for_compliance(
+            forward_get, POLICY_DATABASE, policy_document_id, _workflow_collection()
+        )
+        if guard_err:
+            return jsonify(guard_err), 409
     result = run_multi_jurisdictional(
         forward_post,
         forward_get,
@@ -664,6 +1006,11 @@ def compliance_health_score() -> Any:
     policy_document_id = str(payload.get("policy_document_id", "")).strip()
     if not policy_document_id:
         return jsonify({"error": "policy_document_id is required."}), 400
+    guard_err = assert_policy_ready_for_compliance(
+        forward_get, POLICY_DATABASE, policy_document_id, _workflow_collection()
+    )
+    if guard_err:
+        return jsonify(guard_err), 409
     applicable_jurisdictions = payload.get("applicable_jurisdictions")
     if isinstance(applicable_jurisdictions, list):
         applicable_jurisdictions = [str(j) for j in applicable_jurisdictions]
@@ -672,6 +1019,20 @@ def compliance_health_score() -> Any:
     config = load_compliance_config()
     index_db = payload.get("index_database_name") or config.get("index_database_name")
     index_coll = payload.get("index_collection_name") or config.get("index_collection_name")
+    jurisdictions = applicable_jurisdictions or config.get("default_jurisdictions", ["CA", "VA"])
+    statute_guard = assert_statute_indexed_for_jurisdiction(
+        forward_get,
+        forward_post,
+        POLICY_DATABASE,
+        STATUTE_COLLECTION,
+        STATUTE_CHUNK_COLLECTION,
+        jurisdictions,
+        index_db,
+        index_coll,
+        _workflow_collection(),
+    )
+    if statute_guard:
+        return jsonify(statute_guard), 409
     result = run_health_score(
         forward_post,
         forward_get,
@@ -703,6 +1064,37 @@ def compliance_drift_check() -> Any:
         policy_document_ids = [str(pid) for pid in policy_document_ids]
     else:
         policy_document_ids = None
+    if policy_document_ids is None:
+        data, err = forward_get(
+            "/documents",
+            {
+                "database_name": POLICY_DATABASE,
+                "collection_name": POLICY_COLLECTION,
+            },
+        )
+        if not err and isinstance(data, dict):
+            docs = data.get("documents", data.get("data", data.get("results", [])))
+            policy_document_ids = [
+                str(d.get("_id") or d.get("document_id", ""))
+                for d in (docs or [])
+                if d.get("_id") or d.get("document_id")
+            ]
+    not_ready: list[str] = []
+    for pid in policy_document_ids or []:
+        guard_err = assert_policy_ready_for_compliance(
+            forward_get, POLICY_DATABASE, pid, _workflow_collection()
+        )
+        if guard_err:
+            not_ready.append(pid)
+    if not_ready:
+        return (
+            jsonify({
+                "error": "document_not_ready",
+                "message": "One or more policies must complete gather, parse, and vector index before drift check.",
+                "policy_document_ids": not_ready,
+            }),
+            409,
+        )
     config = load_compliance_config()
     index_db = payload.get("index_database_name") or config.get("index_database_name")
     index_coll = payload.get("index_collection_name") or config.get("index_collection_name")

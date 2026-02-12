@@ -43,9 +43,10 @@ def test_save_parsed_writes_each_section(monkeypatch: Any) -> None:
     )
 
     assert response.status_code == 200
-    assert len(calls) == 2
-    first_document = calls[0]["document"]
-    second_document = calls[1]["document"]
+    chunk_calls = [c for c in calls if c.get("collection_name") == "policy_chunks"]
+    assert len(chunk_calls) == 2
+    first_document = chunk_calls[0]["document"]
+    second_document = chunk_calls[1]["document"]
     assert first_document["chunk_index"] == 0
     assert first_document["chunk_header_text"] == "Header A"
     assert first_document["chunk_text"] == "Text A"
@@ -92,8 +93,9 @@ def test_save_parsed_accepts_parsed_header_and_text(monkeypatch: Any) -> None:
     )
 
     assert response.status_code == 200
-    assert len(calls) == 1
-    saved_document = calls[0]["document"]
+    chunk_calls = [c for c in calls if c.get("collection_name") == "statute_chunks"]
+    assert len(chunk_calls) == 1
+    saved_document = chunk_calls[0]["document"]
     assert saved_document["chunk_header_text"] == "General Duties of Businesses"
     assert saved_document["chunk_text"].startswith("# 1798.100. General Duties")
     assert saved_document["code_name"] == "California Consumer Privacy Act"
@@ -139,8 +141,9 @@ def test_save_parsed_preserves_llm_fields(monkeypatch: Any) -> None:
     )
 
     assert response.status_code == 200
-    assert len(calls) == 1
-    saved_document = calls[0]["document"]
+    chunk_calls = [c for c in calls if c.get("collection_name") == "policy_chunks"]
+    assert len(chunk_calls) == 1
+    saved_document = chunk_calls[0]["document"]
     assert saved_document["document_id"] == "doc-789"
     assert saved_document["chunk_index"] == 0
     assert saved_document["jurisdiction"] == "US"
@@ -186,7 +189,8 @@ def test_save_parsed_deletes_existing_documents(monkeypatch: Any) -> None:
     assert response.status_code == 200
     assert calls[0][0] == "get"
     assert calls[1][0] == "delete"
-    assert calls[2][0] == "post"
+    post_calls = [c for c in calls if c[0] == "post"]
+    assert len(post_calls) >= 1
     delete_params = calls[1][1]
     assert delete_params["database_name"] == "privacy-compliance"
     assert delete_params["collection_name"] == "policy_chunks"
