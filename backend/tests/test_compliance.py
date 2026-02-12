@@ -1,0 +1,305 @@
+"""Tests for compliance API endpoints and vector-search proxy."""
+from __future__ import annotations
+
+from typing import Any
+
+from backend import app as app_module
+
+
+def test_vector_search_requires_index_names() -> None:
+    client = app_module.app.test_client()
+    response = client.post("/api/vector-search", json={})
+    assert response.status_code == 400
+    data = response.get_json()
+    assert data and "error" in data
+
+
+def test_vector_search_requires_query_text_or_embedding() -> None:
+    client = app_module.app.test_client()
+    response = client.post(
+        "/api/vector-search",
+        json={
+            "index_database_name": "privacy-compliance",
+            "index_collection_name": "statute_embeddings",
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_vector_search_forwards_payload(monkeypatch: Any) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        calls.append((endpoint, payload))
+        return {"chunks": []}, None
+
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/vector-search",
+        json={
+            "index_database_name": "db",
+            "index_collection_name": "coll",
+            "query_text": "right to delete",
+            "filter": {"jurisdiction": "CA"},
+            "top_k": 10,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0][0] == "/vector-search"
+    assert calls[0][1]["index_database_name"] == "db"
+    assert calls[0][1]["query_text"] == "right to delete"
+    assert calls[0][1]["top_k"] == 10
+
+
+def test_compliance_applicability_requires_policy_document_id() -> None:
+    client = app_module.app.test_client()
+    response = client.post("/api/compliance/applicability", json={})
+    assert response.status_code == 400
+    assert response.get_json().get("error", "").lower().find("policy_document_id") >= 0
+
+
+def test_compliance_applicability_returns_json(monkeypatch: Any) -> None:
+    ready_workflow = {
+        "document_id": "doc-123",
+        "document_type": "policy",
+        "steps": {
+            "gathered": {"completed": True, "completed_at": "2024-01-01T00:00:00Z"},
+            "parsed": {"completed": True, "completed_at": "2024-01-01T00:00:00Z"},
+            "vector_indexed": {"completed": True, "completed_at": "2024-01-01T00:00:00Z"},
+        },
+        "ready_for_compliance": True,
+    }
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if "document_workflow_state" in str(params.get("collection_name", "")):
+            return {"documents": [ready_workflow]}, None
+        return {
+            "documents": [
+                {"_id": "doc-123", "document_id": "doc-123", "text": "Privacy policy for California.", "company_name": "Acme"}
+            ]
+        }, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        if endpoint == "/parse-llm":
+            return {"chunks": [{"parsed_text": '{"applicable_jurisdictions": ["CA"], "confidence": {"CA": 0.9}}'}]}, None
+        return None, ("upstream error", 502)
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/compliance/applicability",
+        json={"policy_document_id": "doc-123"},
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "applicable_jurisdictions" in data or "error" in data
+    if "error" not in data:
+        assert data.get("applicable_jurisdictions") == ["CA"]
+
+
+def test_compliance_applicability_parsed_doc_format(monkeypatch: Any) -> None:
+    """Test applicability when upstream returns parsed_doc (ParseModal-style) format."""
+    ready_workflow = {
+        "document_id": "doc-456",
+        "document_type": "policy",
+        "steps": {"gathered": {"completed": True}, "parsed": {"completed": True}, "vector_indexed": {"completed": True}},
+        "ready_for_compliance": True,
+    }
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if "document_workflow_state" in str(params.get("collection_name", "")):
+            return {"documents": [ready_workflow]}, None
+        return {
+            "documents": [
+                {"_id": "doc-456", "document_id": "doc-456", "text": "Virginia privacy policy.", "company_name": "Test"}
+            ]
+        }, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        if endpoint == "/parse-llm":
+            return {
+                "parsed_doc": [
+                    {"parsed_header_text": "Jurisdictions", "parsed_text": '{"applicable_jurisdictions": ["VA", "US"], "confidence": {"VA": 0.9}}'}
+                ]
+            }, None
+        return None, ("upstream error", 502)
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/compliance/applicability",
+        json={"policy_document_id": "doc-456"},
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "error" not in data
+    assert data.get("applicable_jurisdictions") == ["VA", "US"]
+
+
+def test_compliance_gap_analysis_requires_policy_document_id() -> None:
+    client = app_module.app.test_client()
+    response = client.post("/api/compliance/gap-analysis", json={})
+    assert response.status_code == 400
+
+
+def test_compliance_gap_analysis_returns_spec_shape(monkeypatch: Any) -> None:
+    ready_workflow = {
+        "document_id": "doc-1",
+        "document_type": "policy",
+        "steps": {
+            "gathered": {"completed": True},
+            "parsed": {"completed": True},
+            "vector_indexed": {"completed": True},
+        },
+        "ready_for_compliance": True,
+    }
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if "document_workflow_state" in str(params.get("collection_name", "")):
+            return {"documents": [ready_workflow]}, None
+        if "policies" in str(params.get("collection_name", "")):
+            return {"documents": [{"_id": "doc-1", "text": "We collect data.", "company_name": "Acme"}]}, None
+        if "statute_chunks" in str(params.get("collection_name", "")):
+            return {"documents": []}, None
+        if "statutes" in str(params.get("collection_name", "")):
+            return {"documents": []}, None
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        if endpoint == "/vector-search":
+            return {"chunks": [{"jurisdiction": "CA"}, {"jurisdiction": "VA"}]}, None
+        return None, ("upstream", 502)
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/compliance/gap-analysis",
+        json={"policy_document_id": "doc-1"},
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "gaps" in data
+    assert "summary" in data
+    assert "analyzed_at" in data
+    assert data["summary"].get("total_requirements", 0) >= 0
+
+
+def test_compliance_multi_jurisdictional_requires_jurisdictions() -> None:
+    client = app_module.app.test_client()
+    response = client.post("/api/compliance/multi-jurisdictional", json={})
+    assert response.status_code == 400
+    response2 = client.post(
+        "/api/compliance/multi-jurisdictional",
+        json={"applicable_jurisdictions": "CA"},
+    )
+    assert response2.status_code == 400
+
+
+def test_compliance_multi_jurisdictional_returns_spec_shape(monkeypatch: Any) -> None:
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if "document_workflow_state" in str(params.get("collection_name", "")):
+            return {"documents": []}, None
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        if endpoint == "/vector-search":
+            return {"chunks": [{"jurisdiction": "CA"}, {"jurisdiction": "VA"}]}, None
+        return {"chunks": []}, None
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/compliance/multi-jurisdictional",
+        json={"applicable_jurisdictions": ["CA", "VA"]},
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "strictest_common_denominator" in data
+    assert "conflicts_between_jurisdictions" in data
+    assert data["applicable_jurisdictions"] == ["CA", "VA"]
+
+
+def test_compliance_health_score_requires_policy_document_id() -> None:
+    client = app_module.app.test_client()
+    response = client.post("/api/compliance/health-score", json={})
+    assert response.status_code == 400
+
+
+def test_compliance_health_score_returns_spec_shape(monkeypatch: Any) -> None:
+    ready_workflow = {
+        "document_id": "doc-1",
+        "document_type": "policy",
+        "steps": {
+            "gathered": {"completed": True},
+            "parsed": {"completed": True},
+            "vector_indexed": {"completed": True},
+        },
+        "ready_for_compliance": True,
+    }
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if "document_workflow_state" in str(params.get("collection_name", "")):
+            return {"documents": [ready_workflow]}, None
+        if "policies" in str(params.get("collection_name", "")):
+            return {"documents": [{"_id": "doc-1", "text": "Policy text.", "company_name": "Acme"}]}, None
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        if endpoint == "/vector-search":
+            return {"chunks": [{"jurisdiction": "CA"}]}, None
+        return {"chunks": []}, None
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/compliance/health-score",
+        json={"policy_document_id": "doc-1"},
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "privacy_health_score" in data
+    assert "score_breakdown" in data
+    assert "components" in data
+    assert "analyzed_at" in data
+
+
+def test_compliance_drift_check_returns_spec_shape(monkeypatch: Any) -> None:
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if "policies" in str(params.get("collection_name", "")):
+            return {"documents": []}, None
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        return {"chunks": []}, None
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    client = app_module.app.test_client()
+
+    response = client.post("/api/compliance/drift-check", json={})
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "analyzed_at" in data
+    assert "policies_checked" in data
+    assert "alerts" in data
+    assert isinstance(data["alerts"], list)
