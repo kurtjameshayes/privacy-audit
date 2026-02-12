@@ -1,55 +1,13 @@
 {
+  "use_vector_search": false,
   "index_database_name": "privacy-compliance",
   "index_collection_name": "statute_embeddings",
   "policy_index_collection_name": "policy_embeddings",
   "workflow_state_collection": "document_workflow_state",
   "default_jurisdictions": ["CA", "VA", "CO", "CT", "US"],
-  "canonical_requirement_ids": [
-    "right_to_know",
-    "right_to_delete",
-    "right_to_correct",
-    "opt_out_of_sale",
-    "opt_out_of_sharing",
-    "limit_use_sensitive_data",
-    "non_discrimination",
-    "data_portability",
-    "retention_limits",
-    "disclosure_categories"
-  ],
-  "requirement_weights": {
-    "right_to_know": 1.2,
-    "right_to_delete": 1.2,
-    "right_to_correct": 1.0,
-    "opt_out_of_sale": 1.2,
-    "opt_out_of_sharing": 1.0,
-    "limit_use_sensitive_data": 1.1,
-    "non_discrimination": 1.0,
-    "data_portability": 1.0,
-    "retention_limits": 1.0,
-    "disclosure_categories": 1.1
-  },
-  "category_mapping": {
-    "right_to_know": "rights",
-    "right_to_delete": "rights",
-    "right_to_correct": "rights",
-    "opt_out_of_sale": "rights",
-    "opt_out_of_sharing": "rights",
-    "limit_use_sensitive_data": "disclosures",
-    "non_discrimination": "rights",
-    "data_portability": "rights",
-    "retention_limits": "retention",
-    "disclosure_categories": "disclosures"
-  },
-  "disclosure_query_categories": [
-    "right to know",
-    "right to delete",
-    "sale of data",
-    "sensitive data",
-    "data portability",
-    "non-discrimination"
-  ],
-  "health_score": {
-    "conflict_penalty_multiplier": 0.7,
-    "default_weight": 1.0
-  }
+  "canonical_requirement_ids": ["right_to_know", "right_to_delete", "right_to_correct", "opt_out_of_sale", "opt_out_of_sharing", "limit_use_sensitive_data", "non_discrimination", "data_portability", "retention_limits", "disclosure_categories"],
+  "requirement_weights": {"right_to_know": 1.2, "right_to_delete": 1.2, "right_to_correct": 1, "opt_out_of_sale": 1.2, "opt_out_of_sharing": 1, "limit_use_sensitive_data": 1.1, "non_discrimination": 1, "data_portability": 1, "retention_limits": 1, "disclosure_categories": 1.1},
+  "category_mapping": {"right_to_know": "rights", "right_to_delete": "rights", "right_to_correct": "rights", "opt_out_of_sale": "rights", "opt_out_of_sharing": "rights", "limit_use_sensitive_data": "disclosures", "non_discrimination": "rights", "data_portability": "rights", "retention_limits": "retention", "disclosure_categories": "disclosures"},
+  "disclosure_query_categories": ["right to know", "right to delete", "sale of data", "sensitive data", "data portability", "non-discrimination"],
+  "health_score": {"conflict_penalty_multiplier": 0.7, "default_weight": 1}
 }

@@ -158,13 +158,16 @@ def assert_statute_indexed_for_jurisdiction(
     index_database_name: str | None,
     index_collection_name: str | None,
     workflow_collection: str = WORKFLOW_STATE_COLLECTION,
+    use_vector_search: bool = True,
 ) -> dict[str, Any] | None:
     """
     Check statutes are indexed for the given jurisdictions. Returns None if ready.
+    When use_vector_search is False, checks statute documents by jurisdiction only (no vector-search).
     """
     if not jurisdictions:
         return None
-    if not index_database_name or not index_collection_name:
+    # When vector-search unavailable or not configured, verify statutes exist by jurisdiction
+    if not use_vector_search or not index_database_name or not index_collection_name:
         missing_jurisdictions: list[str] = []
         for j in jurisdictions:
             statutes = _get_documents(
@@ -222,6 +225,7 @@ def backfill_workflow_state(
     policy_index_collection: str,
     statute_index_collection: str,
     workflow_collection: str = WORKFLOW_STATE_COLLECTION,
+    use_vector_search: bool = True,
 ) -> dict[str, Any]:
     """Infer and upsert workflow state for existing documents."""
     results = {"policies": 0, "statutes": 0, "errors": []}
@@ -249,21 +253,24 @@ def backfill_workflow_state(
             steps["parsed"] = _build_step_value(has_chunks)
             vector_indexed = bool(state and state.get("steps", {}).get("vector_indexed", {}).get("completed"))
             if not vector_indexed and has_chunks:
-                try:
-                    data, _ = forward_post(
-                        "/vector-search",
-                        {
-                            "index_database_name": database_name,
-                            "index_collection_name": index_coll,
-                            "query_text": "privacy",
-                            "filter": {"document_id": doc_id},
-                            "top_k": 1,
-                        },
-                    )
-                    chunks_found = data.get("chunks", data.get("documents", data.get("results", [])))
-                    vector_indexed = bool(chunks_found)
-                except Exception:
-                    pass
+                if use_vector_search:
+                    try:
+                        data, _ = forward_post(
+                            "/vector-search",
+                            {
+                                "index_database_name": database_name,
+                                "index_collection_name": index_coll,
+                                "query_text": "privacy",
+                                "filter": {"document_id": doc_id},
+                                "top_k": 1,
+                            },
+                        )
+                        chunks_found = data.get("chunks", data.get("documents", data.get("results", [])))
+                        vector_indexed = bool(chunks_found)
+                    except Exception:
+                        pass
+                else:
+                    vector_indexed = True
             steps["vector_indexed"] = _build_step_value(vector_indexed)
             ready = all(steps.get(s, {}).get("completed") for s in WORKFLOW_STEPS)
             now = datetime.now(timezone.utc).isoformat()

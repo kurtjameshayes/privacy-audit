@@ -648,6 +648,7 @@ def workflow_backfill() -> Any:
         config.get("policy_index_collection_name", "policy_embeddings"),
         config.get("index_collection_name", "statute_embeddings"),
         config.get("workflow_state_collection", "document_workflow_state"),
+        use_vector_search=config.get("use_vector_search", False),
     )
     return jsonify(result)
 
@@ -928,6 +929,7 @@ def compliance_gap_analysis() -> Any:
         index_db,
         index_coll,
         _workflow_collection(),
+        use_vector_search=config.get("use_vector_search", False),
     )
     if statute_guard:
         return jsonify(statute_guard), 409
@@ -973,6 +975,7 @@ def compliance_multi_jurisdictional() -> Any:
         index_db,
         index_coll,
         _workflow_collection(),
+        use_vector_search=config.get("use_vector_search", False),
     )
     if statute_guard:
         return jsonify(statute_guard), 409
@@ -1030,6 +1033,7 @@ def compliance_health_score() -> Any:
         index_db,
         index_coll,
         _workflow_collection(),
+        use_vector_search=config.get("use_vector_search", False),
     )
     if statute_guard:
         return jsonify(statute_guard), 409

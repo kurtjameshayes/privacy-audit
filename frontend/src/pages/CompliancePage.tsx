@@ -433,6 +433,14 @@ export default function CompliancePage() {
 
           <div className="compliance-step">
             <h4>Step 2: Run engines</h4>
+            {(gapLoading || healthLoading || multiLoading || policyStatuteLoading) && (
+              <p className="compliance-loading-hint">
+                {gapLoading && "Running gap analysis…"}
+                {healthLoading && "Running health score…"}
+                {multiLoading && "Running multi-jurisdictional…"}
+                {policyStatuteLoading && "Running policy-statute compliance…"}
+              </p>
+            )}
             <div className="compliance-engine-buttons">
               <button
                 className="ghost-button"
@@ -479,19 +487,21 @@ export default function CompliancePage() {
           </div>
         </div>
 
-        {gapResult && (
+        {(gapResult || gapError) && (
           <div className="compliance-result-block">
             <h4>Gap analysis</h4>
-            {gapError && (
+            {(gapError || (gapResult as { error?: string })?.error) && (
               <div className="error-banner">
-                <span className="error-text">{gapError}</span>
+                <span className="error-text">
+                  {gapError || (gapResult as { message?: string })?.message || (gapResult as { error?: string })?.error}
+                </span>
               </div>
             )}
-            <pre>{JSON.stringify(gapResult, null, 2)}</pre>
+            {gapResult && <pre>{JSON.stringify(gapResult, null, 2)}</pre>}
           </div>
         )}
 
-        {healthResult && (
+        {(healthResult || healthError) && (
           <div className="compliance-result-block">
             <h4>Health score</h4>
             {healthError && (
@@ -499,20 +509,22 @@ export default function CompliancePage() {
                 <span className="error-text">{healthError}</span>
               </div>
             )}
-            <div className="health-score-display">
-              <p>
-                Score: {healthScore != null ? healthScore : "—"} / 100
-              </p>
-              {healthResult.score_breakdown && (
-                <pre>
-                  {JSON.stringify(healthResult.score_breakdown, null, 2)}
-                </pre>
-              )}
-            </div>
+            {healthResult && (
+              <div className="health-score-display">
+                <p>
+                  Score: {healthScore != null ? healthScore : "—"} / 100
+                </p>
+                {healthResult.score_breakdown && (
+                  <pre>
+                    {JSON.stringify(healthResult.score_breakdown, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {multiResult && (
+        {(multiResult || multiError) && (
           <div className="compliance-result-block">
             <h4>Multi-jurisdictional</h4>
             {multiError && (
@@ -520,11 +532,11 @@ export default function CompliancePage() {
                 <span className="error-text">{multiError}</span>
               </div>
             )}
-            <pre>{JSON.stringify(multiResult, null, 2)}</pre>
+            {multiResult && <pre>{JSON.stringify(multiResult, null, 2)}</pre>}
           </div>
         )}
 
-        {policyStatuteResult && (
+        {(policyStatuteResult || policyStatuteError) && (
           <div className="compliance-result-block">
             <h4>Policy-statute compliance</h4>
             {policyStatuteError && (
@@ -532,62 +544,66 @@ export default function CompliancePage() {
                 <span className="error-text">{policyStatuteError}</span>
               </div>
             )}
-            {policyStatuteResult.warnings?.length > 0 && (
-              <div className="compliance-warnings">
-                {policyStatuteResult.warnings.map((w, i) => (
-                  <p key={i} className="compliance-warning-item">
-                    {w}
-                  </p>
-                ))}
-              </div>
-            )}
-            {remediationSuggestions.length > 0 && (
-              <div className="compliance-remediation-panel">
-                <p className="compliance-remediation-title">
-                  Remediation recommendations
-                </p>
-                <ol className="compliance-remediation-list">
-                  {remediationSuggestions.map((s, i) => (
-                    <li key={i}>{s}</li>
+            {policyStatuteResult && (
+              <>
+                {policyStatuteResult.warnings?.length > 0 && (
+                  <div className="compliance-warnings">
+                    {policyStatuteResult.warnings.map((w, i) => (
+                      <p key={i} className="compliance-warning-item">
+                        {w}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {remediationSuggestions.length > 0 && (
+                  <div className="compliance-remediation-panel">
+                    <p className="compliance-remediation-title">
+                      Remediation recommendations
+                    </p>
+                    <ol className="compliance-remediation-list">
+                      {remediationSuggestions.map((s, i) => (
+                        <li key={i}>{s}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+                <div className="compliance-filters">
+                  {(
+                    [
+                      ["all", "All"],
+                      ["compliant", "Compliant"],
+                      ["non_compliant", "Non-compliant"],
+                      ["neither", "Neither"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`mode-button ${complianceFilter === value ? "is-active" : ""}`}
+                      onClick={() => setComplianceFilter(value)}
+                    >
+                      {label}
+                    </button>
                   ))}
-                </ol>
-              </div>
+                </div>
+                <div className="compliance-section-list">
+                  {policyStatuteFilteredSections.map((section) => (
+                    <ComplianceSectionCard
+                      key={section.section_id}
+                      section={section}
+                      expanded={expandedSectionId === section.section_id}
+                      onToggle={() =>
+                        setExpandedSectionId(
+                          expandedSectionId === section.section_id
+                            ? null
+                            : section.section_id
+                        )
+                      }
+                    />
+                  ))}
+                </div>
+              </>
             )}
-            <div className="compliance-filters">
-              {(
-                [
-                  ["all", "All"],
-                  ["compliant", "Compliant"],
-                  ["non_compliant", "Non-compliant"],
-                  ["neither", "Neither"],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`mode-button ${complianceFilter === value ? "is-active" : ""}`}
-                  onClick={() => setComplianceFilter(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div className="compliance-section-list">
-              {policyStatuteFilteredSections.map((section) => (
-                <ComplianceSectionCard
-                  key={section.section_id}
-                  section={section}
-                  expanded={expandedSectionId === section.section_id}
-                  onToggle={() =>
-                    setExpandedSectionId(
-                      expandedSectionId === section.section_id
-                        ? null
-                        : section.section_id
-                    )
-                  }
-                />
-              ))}
-            </div>
           </div>
         )}
       </section>

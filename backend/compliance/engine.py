@@ -210,13 +210,14 @@ def get_statute_chunks(
     index_collection_name: str | None = None,
     query_categories: list[str] | None = None,
     top_k: int = 20,
+    use_vector_search: bool = True,
 ) -> list[dict[str, Any]]:
-    """Return list of statute chunks for the given jurisdictions. Tries vector-search then fallback to list by jurisdiction."""
+    """Return list of statute chunks for the given jurisdictions. Uses vector-search when available, else fallback to list by jurisdiction."""
     query_categories = query_categories or ["right to know", "right to delete", "sale of data", "sensitive data"]
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
 
-    if index_database_name and index_collection_name:
+    if use_vector_search and index_database_name and index_collection_name:
         for j in jurisdictions:
             for q in query_categories:
                 data, error = forward_post(
@@ -425,7 +426,24 @@ def run_gap_analysis(
         index_database_name=index_database_name,
         index_collection_name=index_collection_name,
         query_categories=config.get("disclosure_query_categories"),
+        use_vector_search=config.get("use_vector_search", False),
     )
+
+    if not statute_chunks:
+        return {
+            "policy_document_id": doc_id or policy_document_id,
+            "company_name": company_name,
+            "applicable_jurisdictions": jurisdictions,
+            "analyzed_at": datetime.now(timezone.utc).isoformat(),
+            "gaps": [],
+            "summary": {"total_requirements": 0, "missing": 0, "addressed": 0, "conflicts": 0},
+            "error": "no_statute_chunks",
+            "message": (
+                f"No statute chunks found for jurisdictions: {', '.join(jurisdictions)}. "
+                "Ensure statutes exist in the statutes collection with matching jurisdiction, "
+                "and that they have been parsed (chunks in statute_chunks with document_id)."
+            ),
+        }
 
     gaps: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -504,6 +522,7 @@ def run_multi_jurisdictional(
         index_database_name=index_database_name,
         index_collection_name=index_collection_name,
         query_categories=config.get("disclosure_query_categories"),
+        use_vector_search=config.get("use_vector_search", False),
     )
 
     # Build one requirement per canonical id; use first jurisdiction's description as label

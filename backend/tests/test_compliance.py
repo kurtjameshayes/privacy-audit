@@ -170,9 +170,9 @@ def test_compliance_gap_analysis_returns_spec_shape(monkeypatch: Any) -> None:
         if "policies" in str(params.get("collection_name", "")):
             return {"documents": [{"_id": "doc-1", "text": "We collect data.", "company_name": "Acme"}]}, None
         if "statute_chunks" in str(params.get("collection_name", "")):
-            return {"documents": []}, None
+            return {"documents": [{"document_id": "stat-ca-1", "chunk_text": "Right to know.", "jurisdiction": "CA"}]}, None
         if "statutes" in str(params.get("collection_name", "")):
-            return {"documents": []}, None
+            return {"documents": [{"_id": "stat-ca-1", "document_id": "stat-ca-1", "jurisdiction": "CA"}, {"_id": "stat-va-1", "document_id": "stat-va-1", "jurisdiction": "VA"}]}, None
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
@@ -212,6 +212,10 @@ def test_compliance_multi_jurisdictional_returns_spec_shape(monkeypatch: Any) ->
     def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
         if "document_workflow_state" in str(params.get("collection_name", "")):
             return {"documents": []}, None
+        if "statute_chunks" in str(params.get("collection_name", "")):
+            return {"documents": [{"document_id": "stat-ca-1", "chunk_text": "Right to know.", "jurisdiction": "CA"}]}, None
+        if "statutes" in str(params.get("collection_name", "")):
+            return {"documents": [{"_id": "stat-ca-1", "document_id": "stat-ca-1", "jurisdiction": "CA"}, {"_id": "stat-va-1", "document_id": "stat-va-1", "jurisdiction": "VA"}]}, None
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
@@ -258,6 +262,10 @@ def test_compliance_health_score_returns_spec_shape(monkeypatch: Any) -> None:
             return {"documents": [ready_workflow]}, None
         if "policies" in str(params.get("collection_name", "")):
             return {"documents": [{"_id": "doc-1", "text": "Policy text.", "company_name": "Acme"}]}, None
+        if "statute_chunks" in str(params.get("collection_name", "")):
+            return {"documents": [{"document_id": "stat-ca-1", "chunk_text": "Right to know.", "jurisdiction": "CA"}]}, None
+        if "statutes" in str(params.get("collection_name", "")):
+            return {"documents": [{"_id": "stat-ca-1", "document_id": "stat-ca-1", "jurisdiction": "CA"}]}, None
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
