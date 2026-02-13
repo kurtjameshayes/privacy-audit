@@ -422,6 +422,21 @@ def save_parsed_document() -> Any:
     if not isinstance(chunks, list):
         return jsonify({"error": "chunks must be a list."}), 400
 
+    source_jurisdiction: str | None = None
+    if collection_name == STATUTE_CHUNK_COLLECTION:
+        statute_res, statute_err = forward_get(
+            "/documents",
+            {
+                "database_name": database_name,
+                "collection_name": STATUTE_COLLECTION,
+                "query": json.dumps({"document_id": document_id}),
+            },
+        )
+        if not statute_err and isinstance(statute_res, dict):
+            docs = statute_res.get("documents", statute_res.get("data", statute_res.get("results", [])))
+            if isinstance(docs, list) and docs:
+                source_jurisdiction = str(docs[0].get("jurisdiction", "") or "").strip() or None
+
     query = {"document_id": document_id}
     existing, error = forward_get(
         "/documents",
@@ -478,6 +493,11 @@ def save_parsed_document() -> Any:
         document["chunk_index"] = index
         document["chunk_header_text"] = chunk_header_text
         document["chunk_text"] = chunk_text
+        if collection_name == STATUTE_CHUNK_COLLECTION:
+            if source_jurisdiction is not None:
+                document["jurisdiction"] = source_jurisdiction
+            else:
+                document.pop("jurisdiction", None)  # do not infer from content
 
         data, error = forward_post(
             "/write_to_collection",
@@ -683,6 +703,7 @@ def get_document_workflow_state(document_id: str) -> Any:
 
 def _write_compliance_document(collection: str, document: dict[str, Any]) -> None:
     """Persist a document to the compliance results/alerts/run_log collection."""
+    _debug_log("_write_compliance_document", "writing document", {"collection": collection, "doc_keys": list(document.keys()), "error": document.get("error"), "compliance_error": document.get("compliance_error")}, "H1")
     forward_post(
         "/write_to_collection",
         {
@@ -949,6 +970,11 @@ def compliance_gap_analysis() -> Any:
     )
     if payload.get("save_results"):
         doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}
+        if "error" in result:
+            doc["compliance_error"] = result["error"]
+        if "message" in result:
+            doc["compliance_message"] = result["message"]
+        _debug_log("compliance_gap_analysis", "saving compliance result", {"doc_keys": list(doc.keys()), "has_error": "error" in doc, "has_compliance_error": "compliance_error" in doc}, "H1")
         _write_compliance_document(COMPLIANCE_RESULTS_COLLECTION, doc)
     return jsonify(result)
 
@@ -1054,6 +1080,10 @@ def compliance_health_score() -> Any:
     )
     if payload.get("save_results"):
         doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}
+        if "error" in result:
+            doc["compliance_error"] = result["error"]
+        if "message" in result:
+            doc["compliance_message"] = result["message"]
         _write_compliance_document(COMPLIANCE_RESULTS_COLLECTION, doc)
     return jsonify(result)
 

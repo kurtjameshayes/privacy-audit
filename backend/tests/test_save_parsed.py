@@ -56,10 +56,13 @@ def test_save_parsed_writes_each_section(monkeypatch: Any) -> None:
 
 
 def test_save_parsed_accepts_parsed_header_and_text(monkeypatch: Any) -> None:
-    """Parse-llm returns parsed_header_text and parsed_text; backend accepts them."""
+    """Parse-llm returns parsed_header_text and parsed_text; backend accepts them.
+    Jurisdiction comes from source statute record, not from chunk content."""
     calls: list[dict[str, Any]] = []
 
     def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if params.get("collection_name") == "statutes":
+            return {"documents": [{"document_id": "doc-ccpa", "jurisdiction": "CA"}]}, None
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
@@ -99,9 +102,53 @@ def test_save_parsed_accepts_parsed_header_and_text(monkeypatch: Any) -> None:
     assert saved_document["chunk_header_text"] == "General Duties of Businesses"
     assert saved_document["chunk_text"].startswith("# 1798.100. General Duties")
     assert saved_document["code_name"] == "California Consumer Privacy Act"
-    assert saved_document["jurisdiction"] == "California"
+    assert saved_document["jurisdiction"] == "CA"
     assert saved_document["section"] == "§ 1798.100"
     assert "_id" not in saved_document
+
+
+def test_save_parsed_statute_chunks_no_inferred_jurisdiction(monkeypatch: Any) -> None:
+    """When source statute has no jurisdiction, chunk must not have inferred jurisdiction."""
+    calls: list[dict[str, Any]] = []
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if params.get("collection_name") == "statutes":
+            return {"documents": [{"document_id": "doc-unknown"}]}, None
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        calls.append(payload)
+        return {"ok": True}, None
+
+    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
+        raise AssertionError("forward_delete should not be called.")
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/save-parsed",
+        json={
+            "database_name": "privacy-compliance",
+            "collection_name": "statute_chunks",
+            "document_id": "doc-unknown",
+            "chunks": [
+                {
+                    "jurisdiction": "InferredFromContent",
+                    "chunk_header_text": "Section 1",
+                    "chunk_text": "Some California law text...",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    chunk_calls = [c for c in calls if c.get("collection_name") == "statute_chunks"]
+    assert len(chunk_calls) == 1
+    saved_document = chunk_calls[0]["document"]
+    assert "jurisdiction" not in saved_document
 
 
 def test_save_parsed_preserves_llm_fields(monkeypatch: Any) -> None:

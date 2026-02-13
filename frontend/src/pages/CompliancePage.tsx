@@ -89,9 +89,19 @@ export default function CompliancePage() {
   >("applicability");
 
   const policyId = selectedPolicy ? extractDocumentId(selectedPolicy) : "";
-  const { state: workflowState } = useWorkflowState(policyId || null, "policy");
+  const { state: workflowState, refetch: refetchWorkflow } = useWorkflowState(policyId || null, "policy");
   const missingSteps = getMissingSteps(workflowState);
   const policyReadyForCompliance = workflowState?.ready_for_compliance ?? false;
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible" && policyId) {
+        void refetchWorkflow();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [policyId, refetchWorkflow]);
 
   const policyOptions = useMemo(() => {
     const fromDocs = documents.map((d) => ({
@@ -185,6 +195,7 @@ export default function CompliancePage() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        if (res.status === 409) void refetchWorkflow();
         throw new Error(
           (err as { error?: string }).error || res.statusText || "Request failed"
         );
@@ -217,6 +228,7 @@ export default function CompliancePage() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        if (res.status === 409) void refetchWorkflow();
         throw new Error(
           (err as { error?: string }).error || res.statusText || "Request failed"
         );
@@ -250,6 +262,7 @@ export default function CompliancePage() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        if (res.status === 409) void refetchWorkflow();
         throw new Error(
           (err as { error?: string }).error || res.statusText || "Request failed"
         );
@@ -282,6 +295,7 @@ export default function CompliancePage() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        if (res.status === 409) void refetchWorkflow();
         throw new Error(
           (err as { error?: string }).error || res.statusText || "Request failed"
         );
@@ -399,6 +413,13 @@ export default function CompliancePage() {
           <div className="compliance-not-ready-banner">
             <p>Policy is not ready for compliance. Complete these steps: {missingSteps.join(", ")}.</p>
             <p className="compliance-not-ready-hint">Gather, parse, and vector index the document in Policies.</p>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void refetchWorkflow()}
+            >
+              Refresh workflow status
+            </button>
           </div>
         )}
         <div className="compliance-steps">

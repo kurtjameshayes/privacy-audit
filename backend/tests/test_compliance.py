@@ -197,6 +197,55 @@ def test_compliance_gap_analysis_returns_spec_shape(monkeypatch: Any) -> None:
     assert data["summary"].get("total_requirements", 0) >= 0
 
 
+def test_compliance_gap_analysis_produces_gaps_when_parse_llm_succeeds(monkeypatch: Any) -> None:
+    """When parse-llm returns valid gap-check JSON, we get non-zero requirements."""
+    ready_workflow = {
+        "document_id": "doc-gap",
+        "document_type": "policy",
+        "steps": {"gathered": {"completed": True}, "parsed": {"completed": True}, "vector_indexed": {"completed": True}},
+        "ready_for_compliance": True,
+    }
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if "document_workflow_state" in str(params.get("collection_name", "")):
+            return {"documents": [ready_workflow]}, None
+        if "policies" in str(params.get("collection_name", "")):
+            return {"documents": [{"_id": "doc-gap", "document_id": "doc-gap", "text": "We collect your data.", "company_name": "Acme"}]}, None
+        if "statute_chunks" in str(params.get("collection_name", "")):
+            return {"documents": [{"document_id": "stat-ca-1", "chunk_text": "Right to know.", "chunk_header_text": "Disclosure", "jurisdiction": "CA"}]}, None
+        if "statutes" in str(params.get("collection_name", "")):
+            return {"documents": [{"_id": "stat-ca-1", "document_id": "stat-ca-1", "jurisdiction": "CA"}]}, None
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        if endpoint == "/vector-search":
+            return {"chunks": []}, None
+        if endpoint == "/parse-llm":
+            return {
+                "chunks": [{
+                    "parsed_text": '{"addressed": false, "policy_quote": null, "missing": true, "conflict": false, "conflict_description": null}'
+                }]
+            }, None
+        return None, ("upstream", 502)
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/compliance/gap-analysis",
+        json={"policy_document_id": "doc-gap", "applicable_jurisdictions": ["CA"]},
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "gaps" in data
+    assert "summary" in data
+    assert data["summary"]["total_requirements"] == 1
+    assert len(data["gaps"]) == 1
+    assert data["gaps"][0]["status"] == "missing"
+
+
 def test_compliance_multi_jurisdictional_requires_jurisdictions() -> None:
     client = app_module.app.test_client()
     response = client.post("/api/compliance/multi-jurisdictional", json={})

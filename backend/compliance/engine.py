@@ -13,6 +13,28 @@ from typing import Any, Callable
 
 # Default config path relative to backend/
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "compliance_config.json")
+GAP_DEBUG_LOG_PATH = os.path.join(os.path.dirname(__file__), "..", ".cursor", "compliance_gap_debug.log")
+GAP_DEBUG_MAX_LOGS = 5  # Log only first N failures per run to avoid spam
+_gap_debug_log_count = 0
+
+
+def _gap_debug_log(message: str, data: dict[str, Any]) -> None:
+    """Log gap analysis debug info to compliance_gap_debug.log (first N failures only)."""
+    global _gap_debug_log_count
+    if _gap_debug_log_count >= GAP_DEBUG_MAX_LOGS:
+        return
+    _gap_debug_log_count += 1
+    try:
+        os.makedirs(os.path.dirname(GAP_DEBUG_LOG_PATH), exist_ok=True)
+        with open(GAP_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "message": message,
+                "data": data,
+                "log_index": _gap_debug_log_count,
+            }) + "\n")
+    except Exception:
+        pass
 
 
 def load_config(path: str | None = None) -> dict[str, Any]:
@@ -138,8 +160,35 @@ def _extract_json_from_llm_response(response: Any) -> dict[str, Any] | None:
                     return json.loads(text[start : end + 1])
                 except json.JSONDecodeError:
                     pass
+    # Generic brace-matching for gap-check JSON (addressed, missing, conflict)
+    if any(k in text for k in ("addressed", "missing", "conflict")):
+        start = text.find("{")
+        if start >= 0:
+            depth, end = 0, start
+            for i, c in enumerate(text[start:], start):
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+            if depth == 0:
+                try:
+                    parsed = json.loads(text[start : end + 1])
+                    if any(parsed.get(k) is not None for k in ("addressed", "missing", "conflict")):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
     try:
-        return json.loads(text.strip())
+        parsed = json.loads(text.strip())
+        if not isinstance(parsed, dict):
+            return None
+        if "applicable_jurisdictions" in parsed:
+            return parsed
+        if any(parsed.get(k) is not None for k in ("addressed", "missing", "conflict")):
+            return parsed
+        return None
     except json.JSONDecodeError:
         return None
 
@@ -342,7 +391,7 @@ def _gap_check_single(
 ) -> dict[str, Any]:
     """Run SLM gap check for one statute chunk. Returns {addressed, policy_quote, missing, conflict, conflict_description, analysis_failed}."""
     statute_text = (statute_chunk.get("chunk_text") or statute_chunk.get("chunk_header_text") or "")[:4000]
-    prompt = (
+    base_prompt = (
         f"Consider the following statute requirement:\n\n{statute_text}\n\n"
         "Does the policy document address this requirement? If yes, quote the exact policy phrase. "
         "If there is a conflict with the statute, describe it. "
@@ -350,17 +399,37 @@ def _gap_check_single(
         "{\"addressed\": true or false, \"policy_quote\": \"exact phrase or null\", "
         "\"missing\": true or false, \"conflict\": true or false, \"conflict_description\": \"string or null\"}."
     )
-    response, error = _parse_llm(
-        forward_post,
-        database_name,
-        policy_collection,
-        policy_document_id,
-        prompt,
+    json_reminder = (
+        "\n\nIMPORTANT: Respond with ONLY a valid JSON object, no other text. "
+        "Use the exact keys: addressed, policy_quote, missing, conflict, conflict_description."
     )
-    if error:
-        return {"analysis_failed": True, "addressed": False, "missing": True, "conflict": False}
 
-    parsed = _extract_json_from_llm_response(response)
+    for attempt in range(2):
+        prompt = base_prompt + (json_reminder if attempt > 0 else "")
+        response, error = _parse_llm(
+            forward_post,
+            database_name,
+            policy_collection,
+            policy_document_id,
+            prompt,
+        )
+        if error:
+            msg, status = error
+            _gap_debug_log("parse_llm_upstream_error", {"error_message": msg, "error_status": status})
+            return {"analysis_failed": True, "addressed": False, "missing": True, "conflict": False}
+
+        parsed = _extract_json_from_llm_response(response)
+        if parsed:
+            break
+        if attempt == 0:
+            resp_preview: dict[str, Any] = {
+                "response_type": type(response).__name__,
+                "response_str_truncated": str(response)[:500] if response is not None else "",
+            }
+            if isinstance(response, dict):
+                resp_preview["response_keys"] = list(response.keys())
+            _gap_debug_log("parse_llm_extraction_failed", resp_preview)
+
     if not parsed:
         return {"analysis_failed": True, "addressed": False, "missing": True, "conflict": False}
 
@@ -396,6 +465,8 @@ def run_gap_analysis(
     index_collection_name: str | None = None,
 ) -> dict[str, Any]:
     """Run gap analysis; returns spec JSON with gaps and summary."""
+    global _gap_debug_log_count
+    _gap_debug_log_count = 0
     config = config or load_config()
     jurisdictions = applicable_jurisdictions or config.get("default_jurisdictions", ["CA", "VA"])
     policy_text, company_name, doc_id = get_policy_text(
@@ -445,9 +516,12 @@ def run_gap_analysis(
             ),
         }
 
+    max_chunks = config.get("gap_analysis_max_chunks_per_run")
+    chunks_to_process = statute_chunks[:max_chunks] if isinstance(max_chunks, int) and max_chunks > 0 else statute_chunks
+
     gaps: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    for sc in statute_chunks:
+    for sc in chunks_to_process:
         jurisdiction = sc.get("jurisdiction", "")
         statute_ref = sc.get("document_id", sc.get("_id", ""))
         requirement_summary = (sc.get("chunk_header_text") or sc.get("chunk_text", ""))[:200]
@@ -480,7 +554,7 @@ def run_gap_analysis(
     addressed = sum(1 for g in gaps if g["status"] == "addressed")
     conflicts = sum(1 for g in gaps if g["status"] == "conflict")
 
-    return {
+    out: dict[str, Any] = {
         "policy_document_id": doc_id or policy_document_id,
         "company_name": company_name,
         "applicable_jurisdictions": jurisdictions,
@@ -493,6 +567,18 @@ def run_gap_analysis(
             "conflicts": conflicts,
         },
     }
+    if max_chunks and len(statute_chunks) > max_chunks and total > 0:
+        out["partial"] = True
+        out["message"] = f"Analyzed first {max_chunks} of {len(statute_chunks)} statute chunks (gap_analysis_max_chunks_per_run)."
+    if total == 0 and statute_chunks:
+        out["error"] = "no_requirements_analyzed"
+        out["message"] = (
+            f"Found {len(statute_chunks)} statute chunk(s) but none produced requirements. "
+            "LLM analysis may have failed for all chunks."
+        )
+        out["chunks_attempted"] = len(chunks_to_process)
+        out["analysis_failure_reason"] = "parse_failed"
+    return out
 
 
 def run_multi_jurisdictional(
