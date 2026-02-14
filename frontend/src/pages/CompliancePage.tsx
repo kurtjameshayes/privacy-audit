@@ -8,10 +8,13 @@ import type {
   PolicyStatuteComplianceResponse,
   PolicySectionResult,
   AppliedStatute,
+  GapAnalysisResponse,
+  GapItem,
 } from "../types/api";
 
 const DEFAULT_POLICY_COLLECTION = "policy_embeddings";
 type ComplianceFilter = "all" | "compliant" | "non_compliant" | "neither";
+type GapFilter = "all" | "missing" | "addressed" | "conflict";
 
 function truncateAtBoundary(text: string, maxLen: number): string {
   if (!text || text.length <= maxLen) return text;
@@ -56,9 +59,7 @@ export default function CompliancePage() {
   const [applicabilityError, setApplicabilityError] = useState<string | null>(
     null
   );
-  const [gapResult, setGapResult] = useState<Record<string, unknown> | null>(
-    null
-  );
+  const [gapResult, setGapResult] = useState<GapAnalysisResponse | null>(null);
   const [gapLoading, setGapLoading] = useState(false);
   const [gapError, setGapError] = useState<string | null>(null);
   const [healthResult, setHealthResult] = useState<Record<string, unknown> | null>(
@@ -84,6 +85,7 @@ export default function CompliancePage() {
   const [expandedSectionId, setExpandedSectionId] = useState<string | null>(
     null
   );
+  const [gapFilter, setGapFilter] = useState<GapFilter>("all");
   const [activeTab, setActiveTab] = useState<
     "applicability" | "gap" | "health" | "multi" | "policy-statute"
   >("applicability");
@@ -200,7 +202,7 @@ export default function CompliancePage() {
           (err as { error?: string }).error || res.statusText || "Request failed"
         );
       }
-      const data = await res.json();
+      const data = (await res.json()) as GapAnalysisResponse;
       setGapResult(data);
       setActiveTab("gap");
     } catch (err) {
@@ -315,6 +317,12 @@ export default function CompliancePage() {
     if (complianceFilter === "all") return policyStatuteResult.sections;
     return policyStatuteResult.sections.filter((s) => s.compliance === complianceFilter);
   }, [policyStatuteResult?.sections, complianceFilter]);
+
+  const gapFilteredItems = useMemo(() => {
+    const gaps = gapResult?.gaps ?? [];
+    if (gapFilter === "all") return gaps;
+    return gaps.filter((g) => g.status === gapFilter);
+  }, [gapResult?.gaps, gapFilter]);
 
   const remediationSuggestions = useMemo(() => {
     if (!policyStatuteResult?.sections) return [];
@@ -511,14 +519,21 @@ export default function CompliancePage() {
         {(gapResult || gapError) && (
           <div className="compliance-result-block">
             <h4>Gap analysis</h4>
-            {(gapError || (gapResult as { error?: string })?.error) && (
+            {(gapError || gapResult?.error) && (
               <div className="error-banner">
                 <span className="error-text">
-                  {gapError || (gapResult as { message?: string })?.message || (gapResult as { error?: string })?.error}
+                  {gapError || gapResult?.message || gapResult?.error}
                 </span>
               </div>
             )}
-            {gapResult && <pre>{JSON.stringify(gapResult, null, 2)}</pre>}
+            {gapResult && !gapResult.error && (
+              <GapAnalysisResult
+                result={gapResult}
+                filteredItems={gapFilteredItems}
+                gapFilter={gapFilter}
+                onFilterChange={setGapFilter}
+              />
+            )}
           </div>
         )}
 
@@ -629,6 +644,142 @@ export default function CompliancePage() {
         )}
       </section>
     </>
+  );
+}
+
+function truncateRequirement(text: string, maxLen: number): string {
+  if (!text || text.length <= maxLen) return text;
+  return text.slice(0, maxLen).trimEnd() + "…";
+}
+
+function GapItemCard({ gap }: { gap: GapItem }) {
+  const status = gap.analysis_failed ? "failed" : gap.status ?? "missing";
+  const statusLabel =
+    gap.analysis_failed ? "Analysis failed" : (status === "conflict" ? "Conflict" : status.charAt(0).toUpperCase() + status.slice(1));
+
+  return (
+    <article className="result-card gap-item-card">
+      <div className="gap-item-header">
+        <div className="gap-item-header-main">
+          <p className="gap-item-summary">
+            {truncateRequirement(gap.requirement_summary ?? "", 80)}
+          </p>
+          <div className="gap-item-badges">
+            {gap.jurisdiction && (
+              <span className="gap-item-meta">
+                <span className="gap-item-meta-label">Jurisdiction</span>
+                <span className="gap-jurisdiction-badge">{gap.jurisdiction}</span>
+              </span>
+            )}
+            <span className="gap-item-meta">
+              <span className="gap-item-meta-label">Resolution</span>
+              <span
+                className={`compliance-badge compliance-badge--${status === "failed" ? "analysis_failed" : status}`}
+              >
+                {statusLabel}
+              </span>
+            </span>
+          </div>
+        </div>
+      </div>
+      {(gap.policy_quote || gap.conflict_description || gap.statute_name || gap.section) && (
+        <div className="gap-item-body">
+          {gap.policy_quote && (
+            <div className="gap-item-detail-block">
+              <p className="compliance-detail-label">Policy quote</p>
+              <blockquote className="applied-statute-span">
+                {gap.policy_quote}
+              </blockquote>
+            </div>
+          )}
+          {gap.conflict_description && (
+            <div className="gap-item-detail-block gap-conflict-block">
+              <p className="compliance-detail-label">Conflict</p>
+              <p className="gap-conflict-text">{gap.conflict_description}</p>
+            </div>
+          )}
+          {(gap.statute_name || gap.section) && (
+            <div className="gap-item-detail-block">
+              <p className="compliance-detail-label">Statute</p>
+              <p className="gap-statute-meta">
+                {gap.statute_name}
+                {gap.section && ` · ${gap.section}`}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function GapAnalysisResult({
+  result,
+  filteredItems,
+  gapFilter,
+  onFilterChange,
+}: {
+  result: GapAnalysisResponse;
+  filteredItems: GapItem[];
+  gapFilter: GapFilter;
+  onFilterChange: (f: GapFilter) => void;
+}) {
+  const summary = result.summary ?? {};
+  const total = summary.total_requirements ?? 0;
+  const addressed = summary.addressed ?? 0;
+  const missing = summary.missing ?? 0;
+  const conflicts = summary.conflicts ?? 0;
+
+  return (
+    <div className="gap-analysis-result">
+      <div className="header-card compliance-summary-strip gap-summary-strip">
+        <p className="header-card-title">Total requirements</p>
+        <p className="header-card-value">{total}</p>
+        <div className="compliance-summary-badges">
+          <span className="compliance-summary-badge compliance-badge--addressed">
+            {addressed} addressed
+          </span>
+          <span className="compliance-summary-badge compliance-badge--missing">
+            {missing} missing
+          </span>
+          <span className="compliance-summary-badge compliance-badge--conflict">
+            {conflicts} conflicts
+          </span>
+        </div>
+      </div>
+      <div className="compliance-filters">
+        {(
+          [
+            ["all", "All"],
+            ["missing", "Missing"],
+            ["addressed", "Addressed"],
+            ["conflict", "Conflicts"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            className={`mode-button ${gapFilter === value ? "is-active" : ""}`}
+            onClick={() => onFilterChange(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="compliance-section-list">
+        {filteredItems.length === 0 ? (
+          <p className="gap-empty-message">
+            {result.gaps?.length === 0
+              ? "No gaps found. All requirements are addressed."
+              : `No ${gapFilter === "all" ? "" : gapFilter + " "}gaps match the filter.`}
+          </p>
+        ) : (
+          filteredItems.map((gap, i) => (
+            <GapItemCard key={i} gap={gap} />
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 

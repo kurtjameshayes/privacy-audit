@@ -157,6 +157,35 @@ export interface RunsListResponse {
   offset: number;
 }
 
+export interface GapItem {
+  jurisdiction?: string;
+  requirement_summary?: string;
+  status?: "missing" | "addressed" | "conflict";
+  policy_quote?: string | null;
+  conflict_description?: string | null;
+  statute_name?: string | null;
+  section?: string | null;
+  analysis_failed?: boolean;
+}
+
+export interface GapSummary {
+  total_requirements?: number;
+  addressed?: number;
+  missing?: number;
+  conflicts?: number;
+}
+
+export interface GapAnalysisResponse {
+  policy_document_id?: string;
+  company_name?: string | null;
+  applicable_jurisdictions?: string[];
+  analyzed_at?: string;
+  gaps?: GapItem[];
+  summary?: GapSummary;
+  error?: string;
+  message?: string;
+}
+
 export interface ErrorResponse {
   error?: string;
 }

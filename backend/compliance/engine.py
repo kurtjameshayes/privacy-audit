@@ -13,9 +13,10 @@ from typing import Any, Callable
 
 # Default config path relative to backend/
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "compliance_config.json")
-GAP_DEBUG_LOG_PATH = os.path.join(os.path.dirname(__file__), "..", ".cursor", "compliance_gap_debug.log")
-GAP_DEBUG_MAX_LOGS = 5  # Log only first N failures per run to avoid spam
+GAP_DEBUG_LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".cursor", "compliance_gap_debug.log")
+GAP_DEBUG_MAX_LOGS = 5  # Limit for failure-only logs (legacy)
 _gap_debug_log_count = 0
+GAP_LOG_TRUNCATE = 8000  # Max chars for prompt/response in log
 
 
 def _gap_debug_log(message: str, data: dict[str, Any]) -> None:
@@ -32,6 +33,20 @@ def _gap_debug_log(message: str, data: dict[str, Any]) -> None:
                 "message": message,
                 "data": data,
                 "log_index": _gap_debug_log_count,
+            }) + "\n")
+    except Exception:
+        pass
+
+
+def _gap_log(message: str, data: dict[str, Any]) -> None:
+    """Extensive gap analysis log - always writes, no limit. Use for prompts and LLM responses."""
+    try:
+        os.makedirs(os.path.dirname(GAP_DEBUG_LOG_PATH), exist_ok=True)
+        with open(GAP_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "message": message,
+                "data": data,
             }) + "\n")
     except Exception:
         pass
@@ -101,6 +116,30 @@ def _parse_llm(
             "database_name": database_name,
             "collection_name": collection_name,
             "prompt": prompt,
+        },
+    )
+
+
+def _gap_check_via_upstream(
+    forward_post: Callable[..., tuple[Any, Any]],
+    database_name: str,
+    policy_collection: str,
+    policy_document_id: str,
+    statute_chunk_collection: str,
+    statute_chunk_id: str,
+    max_policy_chars: int = 8000,
+) -> tuple[Any, Any]:
+    """Call upstream /gap-check and return (response, error)."""
+    return forward_post(
+        "/gap-check",
+        {
+            "policy_database_name": database_name,
+            "policy_collection_name": policy_collection,
+            "policy_document_id": policy_document_id,
+            "statute_database_name": database_name,
+            "statute_collection_name": statute_chunk_collection,
+            "statute_document_id": statute_chunk_id,
+            "max_policy_chars": max_policy_chars,
         },
     )
 
@@ -386,10 +425,78 @@ def _gap_check_single(
     database_name: str,
     policy_collection: str,
     policy_document_id: str,
+    statute_chunk_collection: str,
     statute_chunk: dict[str, Any],
     policy_text: str,
+    max_policy_chars: int = 8000,
 ) -> dict[str, Any]:
     """Run SLM gap check for one statute chunk. Returns {addressed, policy_quote, missing, conflict, conflict_description, analysis_failed}."""
+    statute_chunk_id = statute_chunk.get("_id")
+    use_gap_check = statute_chunk_id is not None
+
+    if use_gap_check:
+        statute_chunk_id = str(statute_chunk_id)
+        _gap_log("gap_analysis_llm_request", {
+            "attempt": 1,
+            "policy_document_id": policy_document_id,
+            "policy_collection": policy_collection,
+            "database_name": database_name,
+            "statute_chunk_id": statute_chunk_id,
+            "statute_chunk_collection": statute_chunk_collection,
+            "method": "gap-check",
+        })
+        response, error = _gap_check_via_upstream(
+            forward_post,
+            database_name,
+            policy_collection,
+            policy_document_id,
+            statute_chunk_collection,
+            statute_chunk_id,
+            max_policy_chars=max_policy_chars,
+        )
+        if not error and isinstance(response, dict) and "gap_check" in response:
+            parsed = response["gap_check"]
+            _gap_log("gap_analysis_llm_response", {
+                "attempt": 1,
+                "response_type": "dict",
+                "response_keys": ["gap_check"],
+                "method": "gap-check",
+            })
+            _gap_log("gap_analysis_llm_parsed", {
+                "attempt": 1,
+                "parsed": parsed,
+                "addressed": parsed.get("addressed"),
+                "missing": parsed.get("missing"),
+                "conflict": parsed.get("conflict"),
+                "policy_quote": parsed.get("policy_quote"),
+            })
+            addressed = bool(parsed.get("addressed"))
+            policy_quote = parsed.get("policy_quote") or None
+            if policy_quote and policy_text and policy_quote not in policy_text:
+                addressed = False
+            missing = bool(parsed.get("missing", not addressed))
+            conflict = bool(parsed.get("conflict"))
+            conflict_description = parsed.get("conflict_description") or None
+            return {
+                "addressed": addressed,
+                "policy_quote": policy_quote,
+                "missing": missing,
+                "conflict": conflict,
+                "conflict_description": conflict_description,
+                "analysis_failed": False,
+            }
+        if error:
+            msg, status = error
+            _gap_log("gap_analysis_llm_upstream_error", {
+                "attempt": 1,
+                "error_message": msg,
+                "error_status": status,
+                "policy_document_id": policy_document_id,
+                "method": "gap-check",
+            })
+            _gap_debug_log("parse_llm_upstream_error", {"error_message": msg, "error_status": status})
+        use_gap_check = False
+
     statute_text = (statute_chunk.get("chunk_text") or statute_chunk.get("chunk_header_text") or "")[:4000]
     base_prompt = (
         f"Consider the following statute requirement:\n\n{statute_text}\n\n"
@@ -404,8 +511,19 @@ def _gap_check_single(
         "Use the exact keys: addressed, policy_quote, missing, conflict, conflict_description."
     )
 
+    parsed: dict[str, Any] | None = None
     for attempt in range(2):
         prompt = base_prompt + (json_reminder if attempt > 0 else "")
+        _gap_log("gap_analysis_llm_request", {
+            "attempt": attempt + 1,
+            "policy_document_id": policy_document_id,
+            "policy_collection": policy_collection,
+            "database_name": database_name,
+            "prompt_length": len(prompt),
+            "prompt_full": prompt[:GAP_LOG_TRUNCATE] + ("...[truncated]" if len(prompt) > GAP_LOG_TRUNCATE else ""),
+            "statute_text_preview": statute_text[:300] + ("..." if len(statute_text) > 300 else ""),
+            "method": "parse-llm",
+        })
         response, error = _parse_llm(
             forward_post,
             database_name,
@@ -415,11 +533,34 @@ def _gap_check_single(
         )
         if error:
             msg, status = error
+            _gap_log("gap_analysis_llm_upstream_error", {
+                "attempt": attempt + 1,
+                "error_message": msg,
+                "error_status": status,
+                "policy_document_id": policy_document_id,
+            })
             _gap_debug_log("parse_llm_upstream_error", {"error_message": msg, "error_status": status})
             return {"analysis_failed": True, "addressed": False, "missing": True, "conflict": False}
 
+        response_str = json.dumps(response) if not isinstance(response, str) else response
+        _gap_log("gap_analysis_llm_response", {
+            "attempt": attempt + 1,
+            "response_type": type(response).__name__,
+            "response_length": len(response_str),
+            "response_full": response_str[:GAP_LOG_TRUNCATE] + ("...[truncated]" if len(response_str) > GAP_LOG_TRUNCATE else ""),
+            "response_keys": list(response.keys()) if isinstance(response, dict) else None,
+        })
+
         parsed = _extract_json_from_llm_response(response)
         if parsed:
+            _gap_log("gap_analysis_llm_parsed", {
+                "attempt": attempt + 1,
+                "parsed": parsed,
+                "addressed": parsed.get("addressed"),
+                "missing": parsed.get("missing"),
+                "conflict": parsed.get("conflict"),
+                "policy_quote": parsed.get("policy_quote"),
+            })
             break
         if attempt == 0:
             resp_preview: dict[str, Any] = {
@@ -428,6 +569,11 @@ def _gap_check_single(
             }
             if isinstance(response, dict):
                 resp_preview["response_keys"] = list(response.keys())
+            _gap_log("gap_analysis_llm_extraction_failed", {
+                "attempt": 1,
+                "response_preview": resp_preview,
+                "raw_response_sample": response_str[:1500] if response_str else "",
+            })
             _gap_debug_log("parse_llm_extraction_failed", resp_preview)
 
     if not parsed:
@@ -463,20 +609,22 @@ def run_gap_analysis(
     config: dict[str, Any] | None = None,
     index_database_name: str | None = None,
     index_collection_name: str | None = None,
+    save_results: bool = True,
 ) -> dict[str, Any]:
-    """Run gap analysis; returns spec JSON with gaps and summary."""
-    global _gap_debug_log_count
-    _gap_debug_log_count = 0
+    """Proxy to upstream /api/compliance/gap-analysis. Returns spec JSON with gaps and summary."""
     config = config or load_config()
     jurisdictions = applicable_jurisdictions or config.get("default_jurisdictions", ["CA", "VA"])
-    policy_text, company_name, doc_id = get_policy_text(
-        forward_get,
-        database_name,
-        policy_collection,
-        policy_chunk_collection,
-        policy_document_id=policy_document_id,
-    )
-    if not policy_text:
+
+    body: dict[str, Any] = {
+        "policy_document_id": policy_document_id,
+        "applicable_jurisdictions": jurisdictions,
+        "database": database_name,
+        "policy_collection": policy_collection,
+        "save_results": save_results,
+    }
+    data, error = forward_post("/api/compliance/gap-analysis", body)
+    if error:
+        msg, status = error
         return {
             "policy_document_id": policy_document_id,
             "company_name": "",
@@ -484,101 +632,9 @@ def run_gap_analysis(
             "analyzed_at": datetime.now(timezone.utc).isoformat(),
             "gaps": [],
             "summary": {"total_requirements": 0, "missing": 0, "addressed": 0, "conflicts": 0},
-            "error": "policy_not_found",
+            "error": msg,
         }
-
-    statute_chunks = get_statute_chunks(
-        forward_get,
-        forward_post,
-        database_name,
-        statute_collection,
-        statute_chunk_collection,
-        jurisdictions,
-        index_database_name=index_database_name,
-        index_collection_name=index_collection_name,
-        query_categories=config.get("disclosure_query_categories"),
-        use_vector_search=config.get("use_vector_search", False),
-    )
-
-    if not statute_chunks:
-        return {
-            "policy_document_id": doc_id or policy_document_id,
-            "company_name": company_name,
-            "applicable_jurisdictions": jurisdictions,
-            "analyzed_at": datetime.now(timezone.utc).isoformat(),
-            "gaps": [],
-            "summary": {"total_requirements": 0, "missing": 0, "addressed": 0, "conflicts": 0},
-            "error": "no_statute_chunks",
-            "message": (
-                f"No statute chunks found for jurisdictions: {', '.join(jurisdictions)}. "
-                "Ensure statutes exist in the statutes collection with matching jurisdiction, "
-                "and that they have been parsed (chunks in statute_chunks with document_id)."
-            ),
-        }
-
-    max_chunks = config.get("gap_analysis_max_chunks_per_run")
-    chunks_to_process = statute_chunks[:max_chunks] if isinstance(max_chunks, int) and max_chunks > 0 else statute_chunks
-
-    gaps: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
-    for sc in chunks_to_process:
-        jurisdiction = sc.get("jurisdiction", "")
-        statute_ref = sc.get("document_id", sc.get("_id", ""))
-        requirement_summary = (sc.get("chunk_header_text") or sc.get("chunk_text", ""))[:200]
-        key = (str(statute_ref), requirement_summary)
-        if key in seen:
-            continue
-        seen.add(key)
-        result = _gap_check_single(
-            forward_post,
-            database_name,
-            policy_collection,
-            policy_document_id,
-            sc,
-            policy_text,
-        )
-        if result.get("analysis_failed"):
-            continue
-        status = "conflict" if result["conflict"] else ("addressed" if result["addressed"] else "missing")
-        gaps.append({
-            "jurisdiction": jurisdiction,
-            "statute_reference": str(statute_ref),
-            "requirement_summary": requirement_summary,
-            "status": status,
-            "policy_quote": result.get("policy_quote"),
-            "conflict_description": result.get("conflict_description"),
-        })
-
-    total = len(gaps)
-    missing = sum(1 for g in gaps if g["status"] == "missing")
-    addressed = sum(1 for g in gaps if g["status"] == "addressed")
-    conflicts = sum(1 for g in gaps if g["status"] == "conflict")
-
-    out: dict[str, Any] = {
-        "policy_document_id": doc_id or policy_document_id,
-        "company_name": company_name,
-        "applicable_jurisdictions": jurisdictions,
-        "analyzed_at": datetime.now(timezone.utc).isoformat(),
-        "gaps": gaps,
-        "summary": {
-            "total_requirements": total,
-            "missing": missing,
-            "addressed": addressed,
-            "conflicts": conflicts,
-        },
-    }
-    if max_chunks and len(statute_chunks) > max_chunks and total > 0:
-        out["partial"] = True
-        out["message"] = f"Analyzed first {max_chunks} of {len(statute_chunks)} statute chunks (gap_analysis_max_chunks_per_run)."
-    if total == 0 and statute_chunks:
-        out["error"] = "no_requirements_analyzed"
-        out["message"] = (
-            f"Found {len(statute_chunks)} statute chunk(s) but none produced requirements. "
-            "LLM analysis may have failed for all chunks."
-        )
-        out["chunks_attempted"] = len(chunks_to_process)
-        out["analysis_failure_reason"] = "parse_failed"
-    return out
+    return data
 
 
 def run_multi_jurisdictional(

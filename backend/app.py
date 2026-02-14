@@ -954,6 +954,7 @@ def compliance_gap_analysis() -> Any:
     )
     if statute_guard:
         return jsonify(statute_guard), 409
+    save_results = payload.get("save_results", True)
     result = run_gap_analysis(
         forward_post,
         forward_get,
@@ -967,8 +968,9 @@ def compliance_gap_analysis() -> Any:
         config=config,
         index_database_name=index_db,
         index_collection_name=index_coll,
+        save_results=save_results,
     )
-    if payload.get("save_results"):
+    if save_results:
         doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}
         if "error" in result:
             doc["compliance_error"] = result["error"]

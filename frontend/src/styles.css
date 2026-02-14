@@ -1228,8 +1228,8 @@ input[type="text"]:focus {
 }
 
 .compliance-summary-badge {
-  font-size: 12px;
-  padding: 4px 10px;
+  font-size: 11px;
+  padding: 3px 8px;
   border-radius: 999px;
   font-weight: 600;
 }
@@ -1374,6 +1374,142 @@ input[type="text"]:focus {
 
 .compliance-badge--neither {
   background: rgba(120, 133, 156, 0.25);
+  color: var(--slate);
+}
+
+.compliance-badge--addressed {
+  background: rgba(13, 125, 74, 0.2);
+  color: #0d7d4a;
+}
+
+.compliance-badge--missing {
+  background: rgba(185, 28, 28, 0.2);
+  color: #b91c1c;
+}
+
+.compliance-badge--conflict {
+  background: rgba(217, 119, 6, 0.2);
+  color: #b45309;
+}
+
+.compliance-badge--analysis_failed {
+  background: rgba(120, 133, 156, 0.2);
+  color: var(--slate-light);
+}
+
+/* Gap analysis result */
+.gap-analysis-result {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.gap-summary-strip {
+  max-width: 360px;
+}
+
+.gap-empty-message {
+  margin: 0;
+  padding: 24px 20px;
+  background: var(--bg-card-muted);
+  border-radius: 12px;
+  color: var(--slate);
+  font-size: 14px;
+  text-align: center;
+}
+
+.gap-item-card {
+  padding: 16px 20px;
+}
+
+.gap-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gap-item-header-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.gap-item-summary {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.gap-item-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.gap-item-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gap-item-meta-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--slate-light);
+}
+
+.gap-item-card .compliance-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.gap-jurisdiction-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-card-muted);
+  color: var(--slate);
+  font-weight: 600;
+}
+
+.gap-item-body {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gap-item-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gap-conflict-block {
+  padding: 12px;
+  background: rgba(217, 119, 6, 0.1);
+  border-radius: 8px;
+  border: 1px solid rgba(217, 119, 6, 0.25);
+}
+
+.gap-conflict-text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.gap-statute-meta {
+  margin: 0;
+  font-size: 13px;
   color: var(--slate);
 }
 

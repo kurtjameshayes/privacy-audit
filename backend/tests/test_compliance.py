@@ -167,17 +167,20 @@ def test_compliance_gap_analysis_returns_spec_shape(monkeypatch: Any) -> None:
     def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
         if "document_workflow_state" in str(params.get("collection_name", "")):
             return {"documents": [ready_workflow]}, None
-        if "policies" in str(params.get("collection_name", "")):
-            return {"documents": [{"_id": "doc-1", "text": "We collect data.", "company_name": "Acme"}]}, None
-        if "statute_chunks" in str(params.get("collection_name", "")):
-            return {"documents": [{"document_id": "stat-ca-1", "chunk_text": "Right to know.", "jurisdiction": "CA"}]}, None
         if "statutes" in str(params.get("collection_name", "")):
-            return {"documents": [{"_id": "stat-ca-1", "document_id": "stat-ca-1", "jurisdiction": "CA"}, {"_id": "stat-va-1", "document_id": "stat-va-1", "jurisdiction": "VA"}]}, None
+            return {"documents": [{"_id": "stat-ca-1", "document_id": "stat-ca-1", "jurisdiction": "CA"}]}, None
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/vector-search":
-            return {"chunks": [{"jurisdiction": "CA"}, {"jurisdiction": "VA"}]}, None
+        if endpoint == "/api/compliance/gap-analysis":
+            return {
+                "policy_document_id": "doc-1",
+                "company_name": "Acme",
+                "applicable_jurisdictions": ["CA", "VA"],
+                "analyzed_at": "2024-01-01T00:00:00Z",
+                "gaps": [],
+                "summary": {"total_requirements": 0, "missing": 0, "addressed": 0, "conflicts": 0},
+            }, None
         return None, ("upstream", 502)
 
     monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
@@ -197,8 +200,8 @@ def test_compliance_gap_analysis_returns_spec_shape(monkeypatch: Any) -> None:
     assert data["summary"].get("total_requirements", 0) >= 0
 
 
-def test_compliance_gap_analysis_produces_gaps_when_parse_llm_succeeds(monkeypatch: Any) -> None:
-    """When parse-llm returns valid gap-check JSON, we get non-zero requirements."""
+def test_compliance_gap_analysis_produces_gaps_when_upstream_succeeds(monkeypatch: Any) -> None:
+    """When upstream /api/compliance/gap-analysis returns gaps, we get non-zero requirements."""
     ready_workflow = {
         "document_id": "doc-gap",
         "document_type": "policy",
@@ -206,25 +209,34 @@ def test_compliance_gap_analysis_produces_gaps_when_parse_llm_succeeds(monkeypat
         "ready_for_compliance": True,
     }
 
+    gap_analysis_calls: list[dict[str, Any]] = []
+
     def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
         if "document_workflow_state" in str(params.get("collection_name", "")):
             return {"documents": [ready_workflow]}, None
-        if "policies" in str(params.get("collection_name", "")):
-            return {"documents": [{"_id": "doc-gap", "document_id": "doc-gap", "text": "We collect your data.", "company_name": "Acme"}]}, None
-        if "statute_chunks" in str(params.get("collection_name", "")):
-            return {"documents": [{"document_id": "stat-ca-1", "chunk_text": "Right to know.", "chunk_header_text": "Disclosure", "jurisdiction": "CA"}]}, None
         if "statutes" in str(params.get("collection_name", "")):
             return {"documents": [{"_id": "stat-ca-1", "document_id": "stat-ca-1", "jurisdiction": "CA"}]}, None
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/vector-search":
-            return {"chunks": []}, None
-        if endpoint == "/parse-llm":
+        if endpoint == "/api/compliance/gap-analysis":
+            gap_analysis_calls.append(payload)
             return {
-                "chunks": [{
-                    "parsed_text": '{"addressed": false, "policy_quote": null, "missing": true, "conflict": false, "conflict_description": null}'
-                }]
+                "policy_document_id": "doc-gap",
+                "company_name": "Acme",
+                "applicable_jurisdictions": ["CA"],
+                "analyzed_at": "2024-01-01T00:00:00Z",
+                "gaps": [
+                    {
+                        "jurisdiction": "CA",
+                        "requirement_summary": "Right to know",
+                        "status": "missing",
+                        "policy_quote": None,
+                        "conflict_description": None,
+                        "statute_reference": "stat-ca-1",
+                    }
+                ],
+                "summary": {"total_requirements": 1, "missing": 1, "addressed": 0, "conflicts": 0},
             }, None
         return None, ("upstream", 502)
 
@@ -244,6 +256,9 @@ def test_compliance_gap_analysis_produces_gaps_when_parse_llm_succeeds(monkeypat
     assert data["summary"]["total_requirements"] == 1
     assert len(data["gaps"]) == 1
     assert data["gaps"][0]["status"] == "missing"
+    assert len(gap_analysis_calls) == 1
+    assert gap_analysis_calls[0].get("policy_document_id") == "doc-gap"
+    assert gap_analysis_calls[0].get("applicable_jurisdictions") == ["CA"]
 
 
 def test_compliance_multi_jurisdictional_requires_jurisdictions() -> None:
@@ -309,18 +324,30 @@ def test_compliance_health_score_returns_spec_shape(monkeypatch: Any) -> None:
     def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
         if "document_workflow_state" in str(params.get("collection_name", "")):
             return {"documents": [ready_workflow]}, None
-        if "policies" in str(params.get("collection_name", "")):
-            return {"documents": [{"_id": "doc-1", "text": "Policy text.", "company_name": "Acme"}]}, None
-        if "statute_chunks" in str(params.get("collection_name", "")):
-            return {"documents": [{"document_id": "stat-ca-1", "chunk_text": "Right to know.", "jurisdiction": "CA"}]}, None
         if "statutes" in str(params.get("collection_name", "")):
             return {"documents": [{"_id": "stat-ca-1", "document_id": "stat-ca-1", "jurisdiction": "CA"}]}, None
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/vector-search":
-            return {"chunks": [{"jurisdiction": "CA"}]}, None
-        return {"chunks": []}, None
+        if endpoint == "/api/compliance/gap-analysis":
+            return {
+                "policy_document_id": "doc-1",
+                "company_name": "Acme",
+                "applicable_jurisdictions": ["CA"],
+                "analyzed_at": "2024-01-01T00:00:00Z",
+                "gaps": [
+                    {
+                        "jurisdiction": "CA",
+                        "requirement_summary": "right_to_know",
+                        "status": "addressed",
+                        "policy_quote": "We collect data.",
+                        "conflict_description": None,
+                        "statute_reference": "stat-ca-1",
+                    }
+                ],
+                "summary": {"total_requirements": 1, "missing": 0, "addressed": 1, "conflicts": 0},
+            }, None
+        return None, ("upstream", 502)
 
     monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
     monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
@@ -346,6 +373,15 @@ def test_compliance_drift_check_returns_spec_shape(monkeypatch: Any) -> None:
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        if endpoint == "/api/compliance/gap-analysis":
+            return {
+                "policy_document_id": payload.get("policy_document_id", ""),
+                "company_name": "",
+                "applicable_jurisdictions": [],
+                "analyzed_at": "2024-01-01T00:00:00Z",
+                "gaps": [],
+                "summary": {"total_requirements": 0, "missing": 0, "addressed": 0, "conflicts": 0},
+            }, None
         return {"chunks": []}, None
 
     monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
