@@ -1,12 +1,31 @@
-import { useState, useEffect } from "react";
-import { apiGet } from "../api/client";
-import type { RunsListResponse } from "../types/api";
+import { useState, useEffect, useMemo } from "react";
+import { apiGet, apiPost } from "../api/client";
+import { GapAnalysisResult } from "../components/GapAnalysisView";
+import type {
+  RunsListResponse,
+  RunDetail,
+  RunSummaryItem,
+} from "../types/api";
+import { toGapAnalysisResponse } from "../types/api";
+
+type GapFilter = "all" | "missing" | "addressed" | "conflict";
 
 function formatDate(value?: string): string {
   if (!value) return "—";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString();
+}
+
+function getRunId(run: RunSummaryItem): string | null {
+  return run.run_id ?? run.job_id ?? null;
+}
+
+function getPolicyIdFromDetail(detail: RunDetail | null): string | undefined {
+  if (!detail || typeof detail !== "object") return undefined;
+  const d = detail as Record<string, unknown>;
+  const req = d.request as Record<string, unknown> | undefined;
+  return (req?.policy_document_id as string) ?? (d.policy_document_id as string);
 }
 
 export default function RunsPage() {
@@ -24,6 +43,27 @@ export default function RunsPage() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [runDetail, setRunDetail] = useState<unknown>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  const [detailView, setDetailView] = useState<"gap" | "raw">("gap");
+  const [gapFilter, setGapFilter] = useState<GapFilter>("all");
+  const [expandedGapIndex, setExpandedGapIndex] = useState<number | null>(null);
+
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [rerunLoading, setRerunLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteSupported, setDeleteSupported] = useState<boolean | null>(null);
+
+  const gapResult = useMemo(
+    () => toGapAnalysisResponse(runDetail as RunDetail | null),
+    [runDetail]
+  );
+
+  const gapFilteredItems = useMemo(() => {
+    const gaps = gapResult?.gaps ?? [];
+    if (gapFilter === "all") return gaps;
+    return gaps.filter((g) => g.status === gapFilter);
+  }, [gapResult?.gaps, gapFilter]);
 
   const fetchRuns = async () => {
     setLoading(true);
@@ -67,6 +107,9 @@ export default function RunsPage() {
           {}
         );
         setRunDetail(result);
+        setDetailView("gap");
+        setGapFilter("all");
+        setExpandedGapIndex(null);
       } catch {
         setRunDetail(null);
       } finally {
@@ -76,6 +119,109 @@ export default function RunsPage() {
     void load();
   }, [selectedRunId]);
 
+  const handleDownloadJson = () => {
+    if (!runDetail) return;
+    const blob = new Blob([JSON.stringify(runDetail, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const policyId = getPolicyIdFromDetail(runDetail as RunDetail | null) ?? "run";
+    a.download = `compliance-result-${String(policyId)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadReport = async () => {
+    const policyId = getPolicyIdFromDetail(runDetail as RunDetail | null);
+    if (!policyId) {
+      setReportError("No policy document ID in this run.");
+      return;
+    }
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const res = await fetch("/api/compliance/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          policy_document_id: policyId,
+          format: "markdown",
+          source: "latest_stored",
+          include_gap: true,
+          include_health_score: true,
+          include_multi_jurisdictional: false,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          (err as { error?: string }).error || res.statusText || "Report failed"
+        );
+      }
+      const data = (await res.json()) as { content?: string };
+      const content = data.content ?? "";
+      const blob = new Blob([content], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `compliance-report-${policyId}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "Report download failed.");
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const handleRerun = async () => {
+    const policyId = getPolicyIdFromDetail(runDetail as RunDetail | null);
+    if (!policyId) {
+      setReportError("No policy document ID to re-run.");
+      return;
+    }
+    const d = runDetail as Record<string, unknown>;
+    const req = d?.request as Record<string, unknown> | undefined;
+    const jurisdictions = (req?.applicable_jurisdictions ?? d?.applicable_jurisdictions) as string[] | undefined;
+    setRerunLoading(true);
+    setReportError(null);
+    try {
+      await apiPost("/api/compliance/gap-analysis", {
+        policy_document_id: policyId,
+        applicable_jurisdictions: Array.isArray(jurisdictions) ? jurisdictions : undefined,
+        save_results: true,
+      });
+      await fetchRuns();
+      setReportError(null);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "Re-run failed.");
+    } finally {
+      setRerunLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selectedRunId || !window.confirm(`Delete run ${selectedRunId}? This cannot be undone.`)) return;
+    setDeleteLoading(true);
+    setReportError(null);
+    try {
+      const res = await fetch(`/api/compliance/runs/${selectedRunId}`, { method: "DELETE" });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        if (res.status === 501) setDeleteSupported(false);
+        throw new Error((data as { error?: string }).error ?? res.statusText);
+      }
+      setSelectedRunId(null);
+      await fetchRuns();
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "Delete failed.");
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   return (
     <>
       <header className="main-header">
@@ -83,7 +229,8 @@ export default function RunsPage() {
           <p className="eyebrow">Audit Trail</p>
           <h2>Compliance runs</h2>
           <p className="subtitle">
-            Versioned compliance run history. Click a run for full details.
+            Browse gap analysis and compliance results. View structured details
+            or download as JSON or Markdown report.
           </p>
         </div>
         {data && (
@@ -157,6 +304,14 @@ export default function RunsPage() {
           >
             {loading ? "Loading…" : "Apply filters"}
           </button>
+          <button
+            className="ghost-button"
+            type="button"
+            onClick={fetchRuns}
+            disabled={loading}
+          >
+            Refresh
+          </button>
         </div>
 
         {error && (
@@ -181,6 +336,7 @@ export default function RunsPage() {
                       <th>Policy ID</th>
                       <th>Company</th>
                       <th>Run at</th>
+                      <th>Status</th>
                       <th>Health Score</th>
                       <th>Summary</th>
                       <th>Types</th>
@@ -189,38 +345,54 @@ export default function RunsPage() {
                   <tbody>
                     {data.runs.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="empty-cell">
+                        <td colSpan={8} className="empty-cell">
                           No runs match the filters.
                         </td>
                       </tr>
                     ) : (
-                      data.runs.map((run) => (
-                        <tr
-                          key={run.run_id || run.policy_document_id || ""}
-                          className={
-                            selectedRunId === run.run_id ? "selected" : ""
-                          }
-                          onClick={() =>
-                            setSelectedRunId(run.run_id || null)
-                          }
-                        >
-                          <td>{run.run_id ?? "—"}</td>
-                          <td>{run.policy_document_id ?? "—"}</td>
-                          <td>{run.company_name ?? "—"}</td>
-                          <td>{formatDate(run.run_at)}</td>
-                          <td>{run.privacy_health_score ?? "—"}</td>
-                          <td>
-                            {run.summary
-                              ? `${(run.summary as { addressed?: number }).addressed ?? "—"}/${(run.summary as { total_requirements?: number }).total_requirements ?? "—"} addressed`
-                              : "—"}
-                          </td>
-                          <td>
-                            {Array.isArray(run.types)
-                              ? run.types.join(", ")
-                              : "—"}
-                          </td>
-                        </tr>
-                      ))
+                      data.runs.map((run) => {
+                        const id = getRunId(run) ?? run.policy_document_id ?? "";
+                        const displayId = run.run_id ?? run.job_id ?? "";
+                        const dateVal = run.completed_at ?? run.run_at ?? run.created_at;
+                        const typeVal = run.job_type ?? (Array.isArray(run.types) ? run.types.join(", ") : null);
+                        const statusVal = run.status;
+                        return (
+                          <tr
+                            key={id}
+                            className={
+                              selectedRunId === (run.run_id ?? run.job_id ?? null)
+                                ? "selected"
+                                : ""
+                            }
+                            onClick={() => setSelectedRunId(getRunId(run))}
+                          >
+                            <td className="runs-cell-id">
+                              {displayId ? String(displayId).slice(0, 8) + "…" : "—"}
+                            </td>
+                            <td>{run.policy_document_id ?? "—"}</td>
+                            <td>{run.company_name ?? "—"}</td>
+                            <td>{formatDate(dateVal)}</td>
+                            <td>
+                              {statusVal ? (
+                                <span
+                                  className={`status-badge status-${statusVal}`}
+                                >
+                                  {statusVal}
+                                </span>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td>{run.privacy_health_score ?? "—"}</td>
+                            <td>
+                              {run.summary
+                                ? `${(run.summary as { addressed?: number }).addressed ?? "—"}/${(run.summary as { total_requirements?: number }).total_requirements ?? "—"} addressed`
+                                : "—"}
+                            </td>
+                            <td>{typeVal ?? "—"}</td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -251,24 +423,159 @@ export default function RunsPage() {
             ) : null}
           </div>
 
-          <div className="runs-detail-panel">
+          <div className="runs-detail-panel runs-detail-panel--enhanced">
             {selectedRunId ? (
               <>
-                <h4>Run detail</h4>
+                <div className="runs-detail-header">
+                  <h4>Run detail</h4>
+                  <div className="runs-detail-actions">
+                    <div className="runs-view-toggle">
+                      {gapResult && (
+                        <>
+                          <button
+                            type="button"
+                            className={`ghost-button ${detailView === "gap" ? "is-active" : ""}`}
+                            onClick={() => setDetailView("gap")}
+                          >
+                            Gap analysis
+                          </button>
+                          <button
+                            type="button"
+                            className={`ghost-button ${detailView === "raw" ? "is-active" : ""}`}
+                            onClick={() => setDetailView("raw")}
+                          >
+                            Raw JSON
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    <div className="runs-download-buttons">
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={handleRerun}
+                        disabled={!runDetail || rerunLoading || !getPolicyIdFromDetail(runDetail as RunDetail | null)}
+                      >
+                        {rerunLoading ? "Re-running…" : "Re-run"}
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={handleDownloadJson}
+                        disabled={!runDetail}
+                      >
+                        Download JSON
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={handleDownloadReport}
+                        disabled={!runDetail || reportLoading}
+                      >
+                        {reportLoading ? "Generating…" : "Download report"}
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={handleDelete}
+                        disabled={!runDetail || deleteLoading || deleteSupported === false}
+                      >
+                        {deleteLoading ? "Deleting…" : "Delete"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 {detailLoading ? (
                   <div className="loading-state">
                     <span className="loader" />
                     Loading…
                   </div>
                 ) : runDetail ? (
-                  <pre className="run-detail-json">
-                    {JSON.stringify(runDetail, null, 2)}
-                  </pre>
+                  <>
+                    {reportError && (
+                      <div className="error-banner runs-report-error">
+                        <span className="error-text">{reportError}</span>
+                      </div>
+                    )}
+                    {detailView === "gap" && gapResult ? (
+                      <div className="runs-gap-view">
+                        <div className="runs-meta-strip">
+                          {(runDetail as Record<string, unknown>).job_type && (
+                            <span className="runs-meta-item">
+                              <strong>Job type:</strong>{" "}
+                              {String((runDetail as Record<string, unknown>).job_type)}
+                            </span>
+                          )}
+                          {(runDetail as Record<string, unknown>).status && (
+                            <span className="runs-meta-item">
+                              <strong>Status:</strong>{" "}
+                              <span
+                                className={`status-badge status-${(runDetail as Record<string, unknown>).status}`}
+                              >
+                                {String((runDetail as Record<string, unknown>).status)}
+                              </span>
+                            </span>
+                          )}
+                          {(runDetail as Record<string, unknown>).created_at && (
+                            <span className="runs-meta-item">
+                              <strong>Created:</strong>{" "}
+                              {formatDate((runDetail as Record<string, unknown>).created_at as string)}
+                            </span>
+                          )}
+                          {(runDetail as Record<string, unknown>).completed_at && (
+                            <span className="runs-meta-item">
+                              <strong>Completed:</strong>{" "}
+                              {formatDate((runDetail as Record<string, unknown>).completed_at as string)}
+                            </span>
+                          )}
+                          <span className="runs-meta-item">
+                            <strong>Company:</strong>{" "}
+                            {gapResult.company_name ?? "—"}
+                          </span>
+                          <span className="runs-meta-item">
+                            <strong>Policy:</strong>{" "}
+                            {gapResult.policy_document_id ?? "—"}
+                          </span>
+                          <span className="runs-meta-item">
+                            <strong>Jurisdictions:</strong>{" "}
+                            {(gapResult.applicable_jurisdictions ?? []).join(", ") || "—"}
+                          </span>
+                          <span className="runs-meta-item">
+                            <strong>Analyzed:</strong>{" "}
+                            {formatDate(gapResult.analyzed_at)}
+                          </span>
+                          {(runDetail as Record<string, unknown>)
+                            .privacy_health_score != null && (
+                            <span className="runs-meta-item">
+                              <strong>Health score:</strong>{" "}
+                              {String(
+                                (runDetail as Record<string, unknown>)
+                                  .privacy_health_score
+                              )}
+                            </span>
+                          )}
+                        </div>
+                        <GapAnalysisResult
+                          result={gapResult}
+                          filteredItems={gapFilteredItems}
+                          gapFilter={gapFilter}
+                          onFilterChange={setGapFilter}
+                          expandedGapIndex={expandedGapIndex}
+                          onExpandGap={setExpandedGapIndex}
+                        />
+                      </div>
+                    ) : (
+                      <pre className="run-detail-json">
+                        {JSON.stringify(runDetail, null, 2)}
+                      </pre>
+                    )}
+                  </>
                 ) : (
                   <p>Failed to load run detail.</p>
                 )}
                 <button
-                  className="ghost-button"
+                  className="ghost-button runs-close-btn"
                   type="button"
                   onClick={() => setSelectedRunId(null)}
                 >
@@ -277,7 +584,7 @@ export default function RunsPage() {
               </>
             ) : (
               <p className="runs-detail-placeholder">
-                Click a run row to view full payload.
+                Select a run to view gap analysis and download results.
               </p>
             )}
           </div>

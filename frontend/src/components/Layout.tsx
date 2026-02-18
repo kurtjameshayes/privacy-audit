@@ -2,7 +2,7 @@ import { Outlet, NavLink } from "react-router-dom";
 
 const navItems = [
   { to: "/gather", label: "Gather" },
-  { to: "/policies", label: "Policies" },
+  { to: "/policies", label: "Documents" },
   { to: "/compliance", label: "Compliance" },
   { to: "/alerts", label: "Alerts" },
   { to: "/runs", label: "Runs" },

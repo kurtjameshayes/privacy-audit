@@ -172,7 +172,7 @@ def test_compliance_gap_analysis_returns_spec_shape(monkeypatch: Any) -> None:
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/api/compliance/gap-analysis":
+        if endpoint == "/api/v3/compliance/gap-analysis":
             return {
                 "policy_document_id": "doc-1",
                 "company_name": "Acme",
@@ -219,7 +219,7 @@ def test_compliance_gap_analysis_produces_gaps_when_upstream_succeeds(monkeypatc
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/api/compliance/gap-analysis":
+        if endpoint == "/api/v3/compliance/gap-analysis":
             gap_analysis_calls.append(payload)
             return {
                 "policy_document_id": "doc-gap",
@@ -329,7 +329,7 @@ def test_compliance_health_score_returns_spec_shape(monkeypatch: Any) -> None:
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/api/compliance/gap-analysis":
+        if endpoint == "/api/v3/compliance/gap-analysis":
             return {
                 "policy_document_id": "doc-1",
                 "company_name": "Acme",
@@ -366,6 +366,66 @@ def test_compliance_health_score_returns_spec_shape(monkeypatch: Any) -> None:
     assert "analyzed_at" in data
 
 
+def test_compliance_health_score_accepts_weights(monkeypatch: Any) -> None:
+    """Health score endpoint accepts weights in request body per HealthScoreRequest spec."""
+    ready_workflow = {
+        "document_id": "doc-1",
+        "document_type": "policy",
+        "steps": {
+            "gathered": {"completed": True},
+            "parsed": {"completed": True},
+            "vector_indexed": {"completed": True},
+        },
+        "ready_for_compliance": True,
+    }
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if "document_workflow_state" in str(params.get("collection_name", "")):
+            return {"documents": [ready_workflow]}, None
+        if "statutes" in str(params.get("collection_name", "")):
+            return {"documents": [{"_id": "stat-ca-1", "document_id": "stat-ca-1", "jurisdiction": "CA"}]}, None
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        if endpoint == "/api/v3/compliance/gap-analysis":
+            return {
+                "policy_document_id": "doc-1",
+                "company_name": "Acme",
+                "applicable_jurisdictions": ["CA"],
+                "analyzed_at": "2024-01-01T00:00:00Z",
+                "gaps": [
+                    {
+                        "jurisdiction": "CA",
+                        "requirement_summary": "The right to delete personal information",
+                        "status": "addressed",
+                        "policy_quote": "We delete data on request.",
+                        "conflict_description": None,
+                        "statute_reference": "stat-ca-1",
+                    }
+                ],
+                "summary": {"total_requirements": 1, "missing": 0, "addressed": 1, "conflicts": 0},
+            }, None
+        return None, ("upstream", 502)
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    client = app_module.app.test_client()
+
+    weights = {
+        "A consumer shall have the right to request that a business that collects personal information about the consumer disclose to the consumer the following: (1) The categories of personal information it has collected about that consumer.": 2.0,
+        "The right to delete personal information": 1.5,
+    }
+    response = client.post(
+        "/api/compliance/health-score",
+        json={"policy_document_id": "doc-1", "weights": weights},
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "privacy_health_score" in data
+    assert data["privacy_health_score"] == 100  # 1 addressed with weight 1.5
+
+
 def test_compliance_drift_check_returns_spec_shape(monkeypatch: Any) -> None:
     def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
         if "policies" in str(params.get("collection_name", "")):
@@ -373,7 +433,7 @@ def test_compliance_drift_check_returns_spec_shape(monkeypatch: Any) -> None:
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/api/compliance/gap-analysis":
+        if endpoint == "/api/v3/compliance/gap-analysis":
             return {
                 "policy_document_id": payload.get("policy_document_id", ""),
                 "company_name": "",
