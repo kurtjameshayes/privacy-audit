@@ -875,9 +875,17 @@ def compliance_runs() -> Any:
     return jsonify(data)
 
 
-@app.route("/api/compliance/runs/<run_id>", methods=["GET"])
+@app.route("/api/compliance/runs/<run_id>", methods=["GET", "DELETE"])
 def compliance_run_detail(run_id: str) -> Any:
-    """Proxy single compliance run detail to upstream."""
+    """Proxy single compliance run detail to upstream. DELETE requires upstream support."""
+    if request.method == "DELETE":
+        data, error = forward_delete(f"/api/compliance/runs/{run_id}", {})
+        if error:
+            message, status = error
+            if status in (404, 405):
+                return jsonify({"error": "Delete not supported by upstream."}), 501
+            return jsonify({"error": message}), status
+        return jsonify(data if data else {"message": "deleted"}), 200
     data, error = forward_get(f"/api/compliance/runs/{run_id}", {})
     if error:
         message, status = error
@@ -1065,6 +1073,11 @@ def compliance_health_score() -> Any:
     )
     if statute_guard:
         return jsonify(statute_guard), 409
+    weights = payload.get("weights")
+    if isinstance(weights, dict):
+        weights = {str(k): float(v) for k, v in weights.items() if isinstance(v, (int, float))}
+    else:
+        weights = None
     result = run_health_score(
         forward_post,
         forward_get,
@@ -1079,6 +1092,7 @@ def compliance_health_score() -> Any:
         config=config,
         index_database_name=index_db,
         index_collection_name=index_coll,
+        weights=weights,
     )
     if payload.get("save_results"):
         doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}

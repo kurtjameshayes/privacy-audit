@@ -43,3 +43,26 @@ frontend that calls `/api/gather`, `/api/crawl`, and `/api/save-policy`.
 
 The Vite dev server proxies `/api` calls to the Flask API on port 5120. Build
 the frontend with `npm run build` to serve static assets from Flask.
+
+## Production deployment
+
+1. **Install Python dependencies** (required before starting the app):
+   ```bash
+   pip install -r backend/requirements.txt
+   ```
+   Or with a venv:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r backend/requirements.txt
+   ```
+
+2. **Build the frontend**:
+   ```bash
+   cd frontend && npm install && npm run build
+   ```
+
+3. **Start with gunicorn**:
+   ```bash
+   gunicorn -w 4 -b 0.0.0.0:5120 backend.app:app
+   ```

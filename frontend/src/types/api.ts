@@ -141,6 +141,11 @@ export interface RunSummaryItem {
   privacy_health_score?: number | null;
   run_at?: string;
   run_id?: string;
+  job_id?: string;
+  status?: "pending" | "running" | "completed" | "failed";
+  job_type?: string;
+  created_at?: string;
+  completed_at?: string | null;
   summary?: {
     addressed?: number;
     conflicts?: number;
@@ -148,6 +153,37 @@ export interface RunSummaryItem {
     total_requirements?: number;
   };
   types?: string[];
+}
+
+/** Job-shaped run detail from upstream (e.g. /api/compliance/runs/{run_id}) */
+export interface ComplianceJob {
+  job_id?: string;
+  job_type?: string;
+  status?: "pending" | "running" | "completed" | "failed";
+  created_at?: string;
+  completed_at?: string | null;
+  error?: string | null;
+  request?: {
+    policy_document_id?: string;
+    applicable_jurisdictions?: string[];
+    [key: string]: unknown;
+  };
+  result?: GapAnalysisResponse;
+}
+
+/** Run detail can be job-shaped (ComplianceJob) or flat (GapAnalysisResponse-like) */
+export type RunDetail = ComplianceJob | (GapAnalysisResponse & { run_id?: string; run_at?: string });
+
+/** Extract GapAnalysisResponse from run detail (job-shaped or flat) */
+export function toGapAnalysisResponse(detail: RunDetail | null): GapAnalysisResponse | null {
+  if (!detail) return null;
+  if ("result" in detail && detail.result && Array.isArray(detail.result.gaps)) {
+    return detail.result;
+  }
+  if (Array.isArray((detail as GapAnalysisResponse).gaps)) {
+    return detail as GapAnalysisResponse;
+  }
+  return null;
 }
 
 export interface RunsListResponse {
@@ -164,8 +200,17 @@ export interface GapItem {
   policy_quote?: string | null;
   conflict_description?: string | null;
   statute_name?: string | null;
+  statute_reference?: string | null;
+  statute_quote?: string | null;
   section?: string | null;
   analysis_failed?: boolean;
+  confidence?: string | null;
+  policy_subchunk_text?: string | null;
+  statute_subchunk_text?: string | null;
+  policy_chunk_text?: string | null;
+  statute_chunk_text?: string | null;
+  policy_combined_sections?: string | null;
+  statute_chunk_id?: string | null;
 }
 
 export interface GapSummary {

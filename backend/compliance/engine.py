@@ -611,7 +611,7 @@ def run_gap_analysis(
     index_collection_name: str | None = None,
     save_results: bool = True,
 ) -> dict[str, Any]:
-    """Proxy to upstream /api/compliance/gap-analysis. Returns spec JSON with gaps and summary."""
+    """Proxy to upstream /api/v3/compliance/gap-analysis. Returns spec JSON with gaps and summary."""
     config = config or load_config()
     jurisdictions = applicable_jurisdictions or config.get("default_jurisdictions", ["CA", "VA"])
 
@@ -622,7 +622,7 @@ def run_gap_analysis(
         "policy_collection": policy_collection,
         "save_results": save_results,
     }
-    data, error = forward_post("/api/compliance/gap-analysis", body)
+    data, error = forward_post("/api/v3/compliance/gap-analysis", body)
     if error:
         msg, status = error
         return {
@@ -702,10 +702,13 @@ def run_health_score(
     config: dict[str, Any] | None = None,
     index_database_name: str | None = None,
     index_collection_name: str | None = None,
+    weights: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Compute Privacy Health Score (0-100) from gap analysis. Returns spec JSON."""
     config = config or load_config()
-    weights_config = config.get("requirement_weights", {})
+    weights_config = dict(config.get("requirement_weights", {}))
+    if weights:
+        weights_config.update(weights)
     category_mapping = config.get("category_mapping", {})
     health = config.get("health_score", {})
     default_weight = float(health.get("default_weight", 1.0))
