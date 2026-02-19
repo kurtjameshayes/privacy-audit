@@ -13,43 +13,6 @@ from typing import Any, Callable
 
 # Default config path relative to backend/
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "compliance_config.json")
-GAP_DEBUG_LOG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".cursor", "compliance_gap_debug.log")
-GAP_DEBUG_MAX_LOGS = 5  # Limit for failure-only logs (legacy)
-_gap_debug_log_count = 0
-GAP_LOG_TRUNCATE = 8000  # Max chars for prompt/response in log
-
-
-def _gap_debug_log(message: str, data: dict[str, Any]) -> None:
-    """Log gap analysis debug info to compliance_gap_debug.log (first N failures only)."""
-    global _gap_debug_log_count
-    if _gap_debug_log_count >= GAP_DEBUG_MAX_LOGS:
-        return
-    _gap_debug_log_count += 1
-    try:
-        os.makedirs(os.path.dirname(GAP_DEBUG_LOG_PATH), exist_ok=True)
-        with open(GAP_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "message": message,
-                "data": data,
-                "log_index": _gap_debug_log_count,
-            }) + "\n")
-    except Exception:
-        pass
-
-
-def _gap_log(message: str, data: dict[str, Any]) -> None:
-    """Extensive gap analysis log - always writes, no limit. Use for prompts and LLM responses."""
-    try:
-        os.makedirs(os.path.dirname(GAP_DEBUG_LOG_PATH), exist_ok=True)
-        with open(GAP_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "message": message,
-                "data": data,
-            }) + "\n")
-    except Exception:
-        pass
 
 
 def load_config(path: str | None = None) -> dict[str, Any]:
@@ -436,15 +399,6 @@ def _gap_check_single(
 
     if use_gap_check:
         statute_chunk_id = str(statute_chunk_id)
-        _gap_log("gap_analysis_llm_request", {
-            "attempt": 1,
-            "policy_document_id": policy_document_id,
-            "policy_collection": policy_collection,
-            "database_name": database_name,
-            "statute_chunk_id": statute_chunk_id,
-            "statute_chunk_collection": statute_chunk_collection,
-            "method": "gap-check",
-        })
         response, error = _gap_check_via_upstream(
             forward_post,
             database_name,
@@ -456,20 +410,6 @@ def _gap_check_single(
         )
         if not error and isinstance(response, dict) and "gap_check" in response:
             parsed = response["gap_check"]
-            _gap_log("gap_analysis_llm_response", {
-                "attempt": 1,
-                "response_type": "dict",
-                "response_keys": ["gap_check"],
-                "method": "gap-check",
-            })
-            _gap_log("gap_analysis_llm_parsed", {
-                "attempt": 1,
-                "parsed": parsed,
-                "addressed": parsed.get("addressed"),
-                "missing": parsed.get("missing"),
-                "conflict": parsed.get("conflict"),
-                "policy_quote": parsed.get("policy_quote"),
-            })
             addressed = bool(parsed.get("addressed"))
             policy_quote = parsed.get("policy_quote") or None
             if policy_quote and policy_text and policy_quote not in policy_text:
@@ -486,16 +426,7 @@ def _gap_check_single(
                 "analysis_failed": False,
             }
         if error:
-            msg, status = error
-            _gap_log("gap_analysis_llm_upstream_error", {
-                "attempt": 1,
-                "error_message": msg,
-                "error_status": status,
-                "policy_document_id": policy_document_id,
-                "method": "gap-check",
-            })
-            _gap_debug_log("parse_llm_upstream_error", {"error_message": msg, "error_status": status})
-        use_gap_check = False
+            use_gap_check = False
 
     statute_text = (statute_chunk.get("chunk_text") or statute_chunk.get("chunk_header_text") or "")[:4000]
     base_prompt = (
@@ -514,16 +445,6 @@ def _gap_check_single(
     parsed: dict[str, Any] | None = None
     for attempt in range(2):
         prompt = base_prompt + (json_reminder if attempt > 0 else "")
-        _gap_log("gap_analysis_llm_request", {
-            "attempt": attempt + 1,
-            "policy_document_id": policy_document_id,
-            "policy_collection": policy_collection,
-            "database_name": database_name,
-            "prompt_length": len(prompt),
-            "prompt_full": prompt[:GAP_LOG_TRUNCATE] + ("...[truncated]" if len(prompt) > GAP_LOG_TRUNCATE else ""),
-            "statute_text_preview": statute_text[:300] + ("..." if len(statute_text) > 300 else ""),
-            "method": "parse-llm",
-        })
         response, error = _parse_llm(
             forward_post,
             database_name,
@@ -532,49 +453,13 @@ def _gap_check_single(
             prompt,
         )
         if error:
-            msg, status = error
-            _gap_log("gap_analysis_llm_upstream_error", {
-                "attempt": attempt + 1,
-                "error_message": msg,
-                "error_status": status,
-                "policy_document_id": policy_document_id,
-            })
-            _gap_debug_log("parse_llm_upstream_error", {"error_message": msg, "error_status": status})
             return {"analysis_failed": True, "addressed": False, "missing": True, "conflict": False}
 
         response_str = json.dumps(response) if not isinstance(response, str) else response
-        _gap_log("gap_analysis_llm_response", {
-            "attempt": attempt + 1,
-            "response_type": type(response).__name__,
-            "response_length": len(response_str),
-            "response_full": response_str[:GAP_LOG_TRUNCATE] + ("...[truncated]" if len(response_str) > GAP_LOG_TRUNCATE else ""),
-            "response_keys": list(response.keys()) if isinstance(response, dict) else None,
-        })
 
         parsed = _extract_json_from_llm_response(response)
         if parsed:
-            _gap_log("gap_analysis_llm_parsed", {
-                "attempt": attempt + 1,
-                "parsed": parsed,
-                "addressed": parsed.get("addressed"),
-                "missing": parsed.get("missing"),
-                "conflict": parsed.get("conflict"),
-                "policy_quote": parsed.get("policy_quote"),
-            })
             break
-        if attempt == 0:
-            resp_preview: dict[str, Any] = {
-                "response_type": type(response).__name__,
-                "response_str_truncated": str(response)[:500] if response is not None else "",
-            }
-            if isinstance(response, dict):
-                resp_preview["response_keys"] = list(response.keys())
-            _gap_log("gap_analysis_llm_extraction_failed", {
-                "attempt": 1,
-                "response_preview": resp_preview,
-                "raw_response_sample": response_str[:1500] if response_str else "",
-            })
-            _gap_debug_log("parse_llm_extraction_failed", resp_preview)
 
     if not parsed:
         return {"analysis_failed": True, "addressed": False, "missing": True, "conflict": False}
