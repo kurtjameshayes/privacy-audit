@@ -68,5 +68,6 @@ the frontend with `npm run build` to serve static assets from Flask.
    Or manually:
    ```bash
    source .venv/bin/activate
-   gunicorn -w 4 -b 0.0.0.0:5120 --timeout 120 backend.app:app
+   gunicorn -w 2 -b 0.0.0.0:5120 --timeout 120 backend.app:app
    ```
+   For HTTPS, put nginx or another reverse proxy in front for SSL termination.
