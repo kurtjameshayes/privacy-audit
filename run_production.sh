@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run from project root. Installs deps if needed, then starts gunicorn.
-# Uses 2 workers for low-memory servers (1GB); use -w 4 for 2GB+.
+# Use 1 worker for 1GB droplets (avoids OOM); use -w 2 for 2GB+, -w 4 for 4GB+.
 set -e
 cd "$(dirname "$0")"
 
@@ -9,4 +9,4 @@ if [ -d .venv ]; then
 fi
 
 pip install -q -r backend/requirements.txt
-exec gunicorn -w 2 -b 0.0.0.0:5120 --timeout 120 backend.app:app
+exec gunicorn -w 1 -b 0.0.0.0:5120 --timeout 120 backend.app:app
