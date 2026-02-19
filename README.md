@@ -63,7 +63,7 @@ the frontend with `npm run build` to serve static assets from Flask.
    ```
    If xvfb is not installed: `sudo apt install xvfb`
 
-3. **Start with gunicorn**:
+3. **Start with gunicorn** (run from project root, e.g. `cd ..` if in frontend/):
    ```bash
    gunicorn -w 4 -b 0.0.0.0:5120 backend.app:app
    ```
