@@ -3,21 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
-import time
 import uuid
 from typing import Any, Tuple
 
 import requests
-
-# #region agent log
-_DEBUG_LOG = os.path.join(os.path.dirname(__file__), "..", ".cursor", "debug-3ca0ba.log")
-def _debug_log(msg: str, data: dict[str, Any] | None = None, hypothesis_id: str = "") -> None:
-    try:
-        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"timestamp": int(time.time() * 1000), "location": "app.py", "message": msg, "data": data or {}, "hypothesisId": hypothesis_id, "sessionId": "3ca0ba"}) + "\n")
-    except Exception:  # noqa: S110
-        pass
-# #endregion
 
 try:
     from backend.compliance.engine import (
@@ -114,9 +103,6 @@ def forward_post(endpoint: str, payload: dict[str, Any]) -> Tuple[Any, Tuple[str
 def forward_get(
     endpoint: str, params: dict[str, Any]
 ) -> Tuple[Any, Tuple[str, int] | None]:
-    # #region agent log
-    _debug_log("forward_get called", {"endpoint": endpoint, "params": params, "API_BASE_URL_set": bool(API_BASE_URL)}, "A")
-    # #endregion
     if not API_BASE_URL:
         return None, ("GATHER_API_BASE_URL is not set.", 500)
     if not FIRECRAWL_API_KEY:
@@ -128,21 +114,8 @@ def forward_get(
             url, params=params, headers=api_headers(), timeout=60
         )
     except requests.RequestException as exc:
-        # #region agent log
-        _debug_log("forward_get RequestException", {"url": url, "error": str(exc)}, "B")
-        # #endregion
         return None, ("Upstream service unavailable. Check that the service at GATHER_API_BASE_URL is running.", 502)
 
-    # #region agent log
-    doc_count = None
-    if response.status_code == 200:
-        try:
-            j = response.json()
-            doc_count = len(j.get("documents", j.get("data", j.get("results", []))))
-        except Exception:
-            pass
-    _debug_log("forward_get response", {"status": response.status_code, "url": url, "doc_count": doc_count, "has_error": response.status_code >= 400}, "C")
-    # #endregion
     if response.status_code >= 400:
         try:
             message = response.json().get("error", response.text)
@@ -350,10 +323,6 @@ def list_documents() -> Any:
     collection_name = str(payload.get("collection_name", "")).strip()
     query = payload.get("query")
 
-    # #region agent log
-    _debug_log("list_documents request", {"database_name": database_name, "collection_name": collection_name, "has_query": query is not None}, "D")
-    # #endregion
-
     if not database_name or not collection_name:
         return jsonify({
             "error": "database_name and collection_name are required."
@@ -375,14 +344,7 @@ def list_documents() -> Any:
     )
     if error:
         message, status = error
-        # #region agent log
-        _debug_log("list_documents upstream error", {"message": message, "status": status}, "E")
-        # #endregion
         return jsonify({"error": message}), status
-    # #region agent log
-    doc_count = len(data.get("documents", data.get("data", data.get("results", [])))) if isinstance(data, dict) else 0
-    _debug_log("list_documents success", {"doc_count": doc_count, "response_keys": list(data.keys()) if isinstance(data, dict) else []}, "F")
-    # #endregion
     return jsonify(data)
 
 
