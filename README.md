@@ -71,3 +71,5 @@ the frontend with `npm run build` to serve static assets from Flask.
    gunicorn -w 2 -b 0.0.0.0:5120 --timeout 120 backend.app:app
    ```
    For HTTPS, put nginx or another reverse proxy in front for SSL termination.
+
+See [docs/DIGITALOCEAN_DEPLOYMENT.md](docs/DIGITALOCEAN_DEPLOYMENT.md) for firewall, nginx, and systemd setup on a DigitalOcean droplet.
