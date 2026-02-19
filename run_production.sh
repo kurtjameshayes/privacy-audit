@@ -8,4 +8,4 @@ if [ -d .venv ]; then
 fi
 
 pip install -q -r backend/requirements.txt
-exec gunicorn -w 4 -b 0.0.0.0:5120 backend.app:app
+exec gunicorn -w 4 -b 0.0.0.0:5120 --timeout 120 backend.app:app
