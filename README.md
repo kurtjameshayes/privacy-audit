@@ -57,10 +57,11 @@ the frontend with `npm run build` to serve static assets from Flask.
    pip install -r backend/requirements.txt
    ```
 
-2. **Build the frontend**:
+2. **Build the frontend** (on headless servers, use `build:headless`; requires xvfb):
    ```bash
-   cd frontend && npm install && npm run build
+   cd frontend && npm install && npm run build:headless
    ```
+   If xvfb is not installed: `sudo apt install xvfb`
 
 3. **Start with gunicorn**:
    ```bash
