@@ -25,6 +25,9 @@ export function useDocuments(mode: DocMode) {
     setLoading(true);
     setError(null);
     setDocuments([]);
+    // #region agent log
+    fetch('http://127.0.0.1:7900/ingest/7f03b215-7f34-44b8-af4b-b58b95aa6a53',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7a2619'},body:JSON.stringify({sessionId:'7a2619',location:'useDocuments.ts:fetchDocuments',message:'fetchDocuments start',data:{mode},hypothesisId:'all',timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     try {
       const data = await apiPost<{ documents?: DocumentRecord[] }>(
         "/api/documents",
@@ -34,8 +37,14 @@ export function useDocuments(mode: DocMode) {
         }
       );
       const arr = extractResponseArray(data);
+      // #region agent log
+      fetch('http://127.0.0.1:7900/ingest/7f03b215-7f34-44b8-af4b-b58b95aa6a53',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7a2619'},body:JSON.stringify({sessionId:'7a2619',location:'useDocuments.ts:fetchDocuments',message:'fetchDocuments success',data:{arrLen:arr.length},hypothesisId:'H4',timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setDocuments(arr as DocumentRecord[]);
     } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7900/ingest/7f03b215-7f34-44b8-af4b-b58b95aa6a53',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7a2619'},body:JSON.stringify({sessionId:'7a2619',location:'useDocuments.ts:fetchDocuments',message:'fetchDocuments error',data:{errMsg:err instanceof Error?err.message:String(err)},hypothesisId:'H4,H5',timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setError(err instanceof Error ? err.message : "Unable to load documents.");
     } finally {
       setLoading(false);

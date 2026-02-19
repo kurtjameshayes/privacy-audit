@@ -100,12 +100,35 @@ def forward_post(endpoint: str, payload: dict[str, Any]) -> Tuple[Any, Tuple[str
         return {"raw": response.text}, None
 
 
+# #region agent log
+def _debug_log(msg: str, data: dict[str, Any]) -> None:
+    import json
+    log_dir = os.path.join(_project_root, ".cursor")
+    log_path = os.path.join(log_dir, "debug-7a2619.log")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        with open(log_path, "a") as f:
+            f.write(json.dumps({"sessionId": "7a2619", "location": "app.py:forward_get", "message": msg, "data": data, "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000)}) + "\n")
+    except Exception:
+        pass
+# #endregion
+
+
 def forward_get(
     endpoint: str, params: dict[str, Any]
 ) -> Tuple[Any, Tuple[str, int] | None]:
+    # #region agent log
+    _debug_log("forward_get entry", {"hypothesisId": "H1,H2", "api_base_set": bool(API_BASE_URL), "api_key_set": bool(FIRECRAWL_API_KEY), "endpoint": endpoint})
+    # #endregion
     if not API_BASE_URL:
+        # #region agent log
+        _debug_log("forward_get H1 confirmed", {"hypothesisId": "H1", "error": "GATHER_API_BASE_URL is not set"})
+        # #endregion
         return None, ("GATHER_API_BASE_URL is not set.", 500)
     if not FIRECRAWL_API_KEY:
+        # #region agent log
+        _debug_log("forward_get H2 confirmed", {"hypothesisId": "H2", "error": "FIRECRAWL_API_KEY is not set"})
+        # #endregion
         return None, ("FIRECRAWL_API_KEY is not set.", 500)
 
     url = f"{API_BASE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
@@ -114,8 +137,14 @@ def forward_get(
             url, params=params, headers=api_headers(), timeout=60
         )
     except requests.RequestException as exc:
+        # #region agent log
+        _debug_log("forward_get H3,H5", {"hypothesisId": "H3,H5", "error_type": type(exc).__name__, "error_msg": str(exc)[:200], "url_base": API_BASE_URL[:80] + "..." if len(API_BASE_URL) > 80 else API_BASE_URL})
+        # #endregion
         return None, ("Upstream service unavailable. Check that the service at GATHER_API_BASE_URL is running.", 502)
 
+    # #region agent log
+    _debug_log("forward_get response", {"hypothesisId": "H4", "status": response.status_code, "ok": response.status_code < 400})
+    # #endregion
     if response.status_code >= 400:
         try:
             message = response.json().get("error", response.text)
@@ -318,6 +347,9 @@ def save_policy() -> Any:
 @app.route("/api/documents", methods=["POST"])
 def list_documents() -> Any:
     """Proxy document listing requests to the upstream API."""
+    # #region agent log
+    _debug_log("list_documents entry", {"hypothesisId": "all", "message": "api/documents POST received"})
+    # #endregion
     payload = request.get_json(silent=True) or {}
     database_name = str(payload.get("database_name", "")).strip()
     collection_name = str(payload.get("collection_name", "")).strip()
@@ -344,7 +376,14 @@ def list_documents() -> Any:
     )
     if error:
         message, status = error
+        # #region agent log
+        _debug_log("list_documents error", {"hypothesisId": "H4", "message": message, "status": status})
+        # #endregion
         return jsonify({"error": message}), status
+    # #region agent log
+    doc_count = len(data.get("documents", data.get("data", data.get("results", [])))) if isinstance(data, dict) else (len(data) if isinstance(data, list) else 0)
+    _debug_log("list_documents success", {"hypothesisId": "H4", "doc_count": doc_count})
+    # #endregion
     return jsonify(data)
 
 
