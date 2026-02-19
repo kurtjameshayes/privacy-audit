@@ -1145,6 +1145,12 @@ def serve_index() -> Any:
     return send_from_directory(STATIC_FOLDER, "index.html")
 
 
+@app.route("/assets/<path:filename>")
+def serve_assets(filename: str) -> Any:
+    assets_dir = os.path.join(STATIC_FOLDER, "assets")
+    return send_from_directory(assets_dir, filename)
+
+
 @app.errorhandler(404)
 def handle_404(error: Any) -> Any:
     if request.path.startswith("/api/"):
