@@ -48,10 +48,7 @@ the frontend with `npm run build` to serve static assets from Flask.
 
 1. **Install Python dependencies** (required before starting the app):
    ```bash
-   pip install -r backend/requirements.txt
-   ```
-   Or with a venv:
-   ```bash
+   cd /path/to/privacy-audit
    python -m venv .venv
    source .venv/bin/activate
    pip install -r backend/requirements.txt
@@ -63,7 +60,12 @@ the frontend with `npm run build` to serve static assets from Flask.
    ```
    If xvfb is not installed: `sudo apt install xvfb`
 
-3. **Start with gunicorn** (run from project root, e.g. `cd ..` if in frontend/):
+3. **Start the app** (from project root):
    ```bash
+   ./run_production.sh
+   ```
+   Or manually:
+   ```bash
+   source .venv/bin/activate
    gunicorn -w 4 -b 0.0.0.0:5120 backend.app:app
    ```
