@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:headless": "xvfb-run -a ./node_modules/.bin/vite build",
+    "build:headless": "xvfb-run -a npm run build",
     "preview": "vite preview"
   },
   "keywords": [],
