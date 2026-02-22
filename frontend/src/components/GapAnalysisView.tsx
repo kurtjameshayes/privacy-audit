@@ -1,6 +1,6 @@
 import type { GapAnalysisResponse, GapItem, GapSummary } from "../types/api";
 
-type GapFilter = "all" | "missing" | "addressed" | "conflict";
+type GapFilter = "all" | "addressed" | "partial" | "ambiguous" | "missing" | "conflict";
 
 function truncateRequirement(text: string, maxLen: number): string {
   if (!text || text.length <= maxLen) return text;
@@ -17,12 +17,15 @@ export function GapItemCard({
   onToggle?: () => void;
 }) {
   const status = gap.analysis_failed ? "failed" : gap.status ?? "missing";
+  const statusLabels: Record<string, string> = {
+    addressed: "Addressed",
+    partial: "Partial",
+    ambiguous: "Ambiguous",
+    missing: "Missing",
+    conflict: "Conflict",
+  };
   const statusLabel =
-    gap.analysis_failed
-      ? "Analysis failed"
-      : status === "conflict"
-        ? "Conflict"
-        : status.charAt(0).toUpperCase() + status.slice(1);
+    gap.analysis_failed ? "Analysis failed" : statusLabels[status] ?? status.charAt(0).toUpperCase() + status.slice(1);
 
   const hasDetails =
     gap.policy_quote ||
@@ -146,6 +149,8 @@ export function GapAnalysisResult({
   const summary = (result.summary ?? {}) as GapSummary;
   const total = summary.total_requirements ?? 0;
   const addressed = summary.addressed ?? 0;
+  const partial = summary.partial ?? 0;
+  const ambiguous = summary.ambiguous ?? 0;
   const missing = summary.missing ?? 0;
   const conflicts = summary.conflicts ?? 0;
 
@@ -157,6 +162,12 @@ export function GapAnalysisResult({
         <div className="compliance-summary-badges">
           <span className="compliance-summary-badge compliance-badge--addressed">
             {addressed} addressed
+          </span>
+          <span className="compliance-summary-badge compliance-badge--partial">
+            {partial} partial
+          </span>
+          <span className="compliance-summary-badge compliance-badge--ambiguous">
+            {ambiguous} ambiguous
           </span>
           <span className="compliance-summary-badge compliance-badge--missing">
             {missing} missing
@@ -170,8 +181,10 @@ export function GapAnalysisResult({
         {(
           [
             ["all", "All"],
-            ["missing", "Missing"],
             ["addressed", "Addressed"],
+            ["partial", "Partial"],
+            ["ambiguous", "Ambiguous"],
+            ["missing", "Missing"],
             ["conflict", "Conflicts"],
           ] as const
         ).map(([value, label]) => (

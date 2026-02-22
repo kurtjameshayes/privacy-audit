@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from datetime import datetime, timezone
 import json
 import os
@@ -224,6 +225,44 @@ def crawl() -> Any:
         message, status = error
         return jsonify({"error": message}), status
     return jsonify(data)
+
+
+@app.route("/api/upload-document", methods=["POST"])
+def upload_document() -> Any:
+    """Accept a file upload (PDF, TXT, HTML) and return extracted text."""
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"error": "No file provided."}), 400
+
+    filename = file.filename.lower()
+    mode = str(request.form.get("mode") or "policy").strip()
+
+    try:
+        if filename.endswith(".pdf"):
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(file.read()))
+            parts = []
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    parts.append(text)
+            combined_text = "\n\n".join(parts) if parts else ""
+        elif filename.endswith((".txt", ".html", ".htm")):
+            raw = file.read()
+            try:
+                combined_text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                combined_text = raw.decode("latin-1", errors="replace")
+        else:
+            return jsonify({"error": "Unsupported file type. Use PDF, TXT, or HTML."}), 400
+
+        return jsonify({
+            "combined_text": combined_text,
+            "filename": file.filename,
+            "mode": mode,
+        })
+    except Exception as exc:
+        return jsonify({"error": f"Failed to process file: {exc!s}"}), 500
 
 
 @app.route("/api/save-policy", methods=["POST"])
@@ -827,28 +866,218 @@ def compliance_alerts() -> Any:
     return jsonify(data)
 
 
+def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
+    """Transform run detail (drift_check or flat gap format) into user-friendly compliance view."""
+    if isinstance(doc.get("gaps"), list) and (
+        doc.get("policy_document_id") or doc.get("company_name")
+    ):
+        pid = doc.get("policy_document_id")
+        return {
+            "result": doc,
+            "request": {"policy_document_id": pid},
+            "policy_document_id": pid,
+            "run_id": _mongo_id_str(doc.get("_id")),
+            "run_at": doc.get("analyzed_at", doc.get("run_at")),
+            "status": "completed",
+            "job_type": "gap_analysis",
+        }
+    alerts = doc.get("alerts", [])
+    gaps: list[dict[str, Any]] = []
+    policy_document_id = ""
+    company_name: str | None = None
+    jurisdictions: set[str] = set()
+    for a in alerts:
+        pid = a.get("policy_document_id", "")
+        if pid and not policy_document_id:
+            policy_document_id = pid
+        cn = a.get("company_name")
+        if cn is not None and company_name is None:
+            company_name = str(cn) if cn else None
+        for j in a.get("affected_jurisdictions", []):
+            if j:
+                jurisdictions.add(str(j))
+        for g in a.get("new_gaps", []):
+            g = dict(g) if isinstance(g, dict) else {}
+            if "status" not in g:
+                g["status"] = "missing"
+            gaps.append(g)
+        for g in a.get("resolved_gaps", []):
+            g = dict(g) if isinstance(g, dict) else {}
+            g["status"] = "addressed"
+            gaps.append(g)
+    summary = {
+        "addressed": sum(len(a.get("resolved_gaps", [])) for a in alerts),
+        "missing": sum(len(a.get("new_gaps", [])) for a in alerts),
+        "conflicts": 0,
+        "total_requirements": sum(
+            len(a.get("new_gaps", [])) + len(a.get("resolved_gaps", []))
+            for a in alerts
+        ),
+    }
+    health_score = None
+    if alerts:
+        health_score = next(
+            (a.get("current_score") for a in alerts if a.get("current_score") is not None),
+            None
+        )
+    result = {
+        "gaps": gaps,
+        "policy_document_id": policy_document_id or None,
+        "company_name": company_name,
+        "summary": summary,
+        "analyzed_at": doc.get("analyzed_at", ""),
+        "applicable_jurisdictions": sorted(jurisdictions),
+    }
+    return {
+        "result": result,
+        "request": {"policy_document_id": policy_document_id or None},
+        "policy_document_id": policy_document_id or None,
+        "run_id": _mongo_id_str(doc.get("_id")),
+        "run_at": doc.get("analyzed_at", ""),
+        "status": "completed",
+        "job_type": "regulatory_drift",
+        "created_at": doc.get("analyzed_at", ""),
+        "completed_at": doc.get("analyzed_at", ""),
+        "privacy_health_score": health_score,
+    }
+
+
+def _mongo_id_str(rid: Any) -> str:
+    """Convert MongoDB _id to string (handles ObjectId/$oid)."""
+    if rid is None:
+        return ""
+    if isinstance(rid, dict) and "$oid" in rid:
+        return str(rid["$oid"])
+    return str(rid)
+
+
+def _fetch_documents(collection: str) -> list[dict[str, Any]]:
+    """Fetch all documents from a collection via upstream /documents."""
+    params: dict[str, Any] = {
+        "database_name": POLICY_DATABASE,
+        "collection_name": collection,
+    }
+    data, error = forward_get("/documents", params)
+    if error:
+        return []
+    if isinstance(data, dict):
+        docs = data.get("documents", data.get("data", data.get("results", [])))
+        return docs if isinstance(docs, list) else []
+    return []
+
+
+def _runs_from_compliance_run_log(
+    limit: int, offset: int,
+    policy_document_id: str = "",
+    since: str = "",
+    until: str = "",
+    types: str = "",
+) -> dict[str, Any]:
+    """Fetch runs from compliance_run_log and compliance_results, merge and return RunsListResponse shape."""
+    all_runs: list[dict[str, Any]] = []
+
+    run_log_docs = _fetch_documents(COMPLIANCE_RUN_LOG_COLLECTION)
+    for doc in run_log_docs:
+        run_id = _mongo_id_str(doc.get("_id"))
+        analyzed_at = doc.get("analyzed_at", "")
+        alerts = doc.get("alerts", [])
+        pid = doc.get("policy_document_id", "")
+        company_name = doc.get("company_name")
+        first: dict[str, Any] = {}
+        if alerts:
+            first = next((a for a in alerts if a.get("policy_document_id")), alerts[0])
+            pid = pid or first.get("policy_document_id", "")
+            company_name = company_name or first.get("company_name")
+        all_runs.append({
+            "run_id": run_id,
+            "job_id": run_id,
+            "policy_document_id": pid or "",
+            "company_name": company_name,
+            "run_at": analyzed_at,
+            "created_at": analyzed_at,
+            "completed_at": analyzed_at,
+            "privacy_health_score": first.get("current_score") if first else None,
+            "status": "completed",
+            "summary": {
+                "addressed": sum(len(a.get("resolved_gaps", [])) for a in alerts),
+                "missing": sum(len(a.get("new_gaps", [])) for a in alerts),
+                "conflicts": 0,
+                "total_requirements": sum(
+                    len(a.get("new_gaps", [])) + len(a.get("resolved_gaps", []))
+                    for a in alerts
+                ),
+            },
+            "types": ["regulatory_drift"],
+            "_source": "compliance_run_log",
+            "_doc": doc,
+        })
+
+    results_docs = _fetch_documents(COMPLIANCE_RESULTS_COLLECTION)
+    for doc in results_docs:
+        run_id = _mongo_id_str(doc.get("_id"))
+        run_at = doc.get("run_at", "")
+        summary = doc.get("summary", {})
+        all_runs.append({
+            "run_id": run_id,
+            "job_id": run_id,
+            "policy_document_id": doc.get("policy_document_id", "") or "",
+            "company_name": doc.get("company_name"),
+            "run_at": run_at,
+            "created_at": run_at,
+            "completed_at": run_at,
+            "privacy_health_score": doc.get("privacy_health_score"),
+            "status": "completed",
+            "summary": {
+                "addressed": summary.get("addressed", 0),
+                "missing": summary.get("missing", 0),
+                "conflicts": summary.get("conflicts", 0),
+                "total_requirements": summary.get("total_requirements", 0),
+            },
+            "types": ["gap_analysis"],
+            "_source": "compliance_results",
+            "_doc": doc,
+        })
+
+    runs = [{k: v for k, v in r.items() if not k.startswith("_")} for r in all_runs]
+
+    if policy_document_id:
+        runs = [r for r in runs if (r.get("policy_document_id") or "") == policy_document_id]
+    if since:
+        runs = [r for r in runs if (r.get("run_at") or "") >= since]
+    if until:
+        runs = [r for r in runs if (r.get("run_at") or "") <= until]
+    if types:
+        want = {t.strip() for t in types.split(",") if t.strip()}
+        runs = [r for r in runs if want & set(r.get("types") or [])]
+
+    runs.sort(key=lambda r: r.get("run_at") or "", reverse=True)
+    total = len(runs)
+    runs = runs[offset : offset + limit]
+    return {"runs": runs, "total": total, "limit": limit, "offset": offset}
+
+
 @app.route("/api/compliance/runs", methods=["GET"])
 def compliance_runs() -> Any:
-    """Proxy compliance runs list to upstream."""
-    params = {
-        "policy_document_id": request.args.get("policy_document_id", ""),
-        "since": request.args.get("since", ""),
-        "until": request.args.get("until", ""),
-        "limit": request.args.get("limit", "50"),
-        "offset": request.args.get("offset", "0"),
-        "types": request.args.get("types", ""),
-    }
-    params = {k: v for k, v in params.items() if v}
-    data, error = forward_get("/api/compliance/runs", params)
-    if error:
-        message, status = error
-        return jsonify({"error": message}), status
+    """Serve runs from compliance_run_log (local MongoDB) for accurate count and list."""
+    limit = int(request.args.get("limit", "50") or "50")
+    offset = int(request.args.get("offset", "0") or "0")
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    policy_document_id = str(request.args.get("policy_document_id", "")).strip()
+    since = str(request.args.get("since", "")).strip()
+    until = str(request.args.get("until", "")).strip()
+    types = str(request.args.get("types", "")).strip()
+    data = _runs_from_compliance_run_log(
+        limit=limit, offset=offset,
+        policy_document_id=policy_document_id,
+        since=since, until=until, types=types,
+    )
     return jsonify(data)
 
 
 @app.route("/api/compliance/runs/<run_id>", methods=["GET", "DELETE"])
 def compliance_run_detail(run_id: str) -> Any:
-    """Proxy single compliance run detail to upstream. DELETE requires upstream support."""
+    """Serve run detail from compliance_run_log. DELETE requires upstream support."""
     if request.method == "DELETE":
         data, error = forward_delete(f"/api/compliance/runs/{run_id}", {})
         if error:
@@ -857,11 +1086,29 @@ def compliance_run_detail(run_id: str) -> Any:
                 return jsonify({"error": "Delete not supported by upstream."}), 501
             return jsonify({"error": message}), status
         return jsonify(data if data else {"message": "deleted"}), 200
-    data, error = forward_get(f"/api/compliance/runs/{run_id}", {})
-    if error:
-        message, status = error
-        return jsonify({"error": message}), status
-    return jsonify(data)
+
+    for collection in (COMPLIANCE_RUN_LOG_COLLECTION, COMPLIANCE_RESULTS_COLLECTION):
+        for query in ({"_id": run_id}, {"_id": {"$oid": run_id}}, None):
+            params: dict[str, Any] = {
+                "database_name": POLICY_DATABASE,
+                "collection_name": collection,
+            }
+            if query is not None:
+                params["query"] = json.dumps(query)
+            data, error = forward_get("/documents", params)
+            if error:
+                continue
+            docs = []
+            if isinstance(data, dict):
+                docs = data.get("documents", data.get("data", data.get("results", [])))
+            if isinstance(docs, list) and docs:
+                if query is None:
+                    match = next((d for d in docs if _mongo_id_str(d.get("_id")) == run_id), None)
+                    if match:
+                        return jsonify(_run_detail_to_compliance_view(match))
+                else:
+                    return jsonify(_run_detail_to_compliance_view(docs[0]))
+    return jsonify({"error": "Run not found."}), 404
 
 
 @app.route("/api/compliance/applicability", methods=["POST"])
@@ -924,6 +1171,12 @@ def compliance_gap_analysis() -> Any:
     if statute_guard:
         return jsonify(statute_guard), 409
     save_results = payload.get("save_results", True)
+    num_rows = payload.get("num_rows")
+    if num_rows is not None:
+        try:
+            num_rows = int(num_rows)
+        except (TypeError, ValueError):
+            num_rows = None
     result = run_gap_analysis(
         forward_post,
         forward_get,
@@ -938,6 +1191,7 @@ def compliance_gap_analysis() -> Any:
         index_database_name=index_db,
         index_collection_name=index_coll,
         save_results=save_results,
+        num_rows=num_rows,
     )
     if save_results:
         doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}

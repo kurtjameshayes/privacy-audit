@@ -196,7 +196,7 @@ export interface RunsListResponse {
 export interface GapItem {
   jurisdiction?: string;
   requirement_summary?: string;
-  status?: "missing" | "addressed" | "conflict";
+  status?: "addressed" | "partial" | "ambiguous" | "missing" | "conflict";
   policy_quote?: string | null;
   conflict_description?: string | null;
   statute_name?: string | null;
@@ -216,6 +216,8 @@ export interface GapItem {
 export interface GapSummary {
   total_requirements?: number;
   addressed?: number;
+  partial?: number;
+  ambiguous?: number;
   missing?: number;
   conflicts?: number;
 }

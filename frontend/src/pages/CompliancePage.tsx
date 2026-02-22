@@ -15,7 +15,7 @@ import type {
 
 const DEFAULT_POLICY_COLLECTION = "policy_embeddings";
 type ComplianceFilter = "all" | "compliant" | "non_compliant" | "neither";
-type GapFilter = "all" | "missing" | "addressed" | "conflict";
+type GapFilter = "all" | "addressed" | "partial" | "ambiguous" | "missing" | "conflict";
 
 function truncateAtBoundary(text: string, maxLen: number): string {
   if (!text || text.length <= maxLen) return text;
@@ -87,6 +87,7 @@ export default function CompliancePage() {
     null
   );
   const [gapFilter, setGapFilter] = useState<GapFilter>("all");
+  const [numRows, setNumRows] = useState<string>("");
   const [activeTab, setActiveTab] = useState<
     "applicability" | "gap" | "health" | "multi" | "policy-statute"
   >("applicability");
@@ -186,15 +187,20 @@ export default function CompliancePage() {
     setGapError(null);
     setGapResult(null);
     try {
+      const payload: Record<string, unknown> = {
+        policy_document_id: policyId,
+        applicable_jurisdictions:
+          jurisdictions.length > 0 ? jurisdictions : undefined,
+        save_results: true,
+      };
+      const n = numRows.trim() ? parseInt(numRows, 10) : undefined;
+      if (n !== undefined && !Number.isNaN(n) && n > 0) {
+        payload.num_rows = n;
+      }
       const res = await fetch("/api/compliance/gap-analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          policy_document_id: policyId,
-          applicable_jurisdictions:
-            jurisdictions.length > 0 ? jurisdictions : undefined,
-          save_results: true,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -463,6 +469,16 @@ export default function CompliancePage() {
 
           <div className="compliance-step">
             <h4>Step 2: Run engines</h4>
+            <label className="applicability-result">
+              <span>Number of rows (gap analysis):</span>
+              <input
+                type="number"
+                min={1}
+                value={numRows}
+                onChange={(e) => setNumRows(e.target.value)}
+                placeholder="e.g. 50"
+              />
+            </label>
             {(gapLoading || healthLoading || multiLoading || policyStatuteLoading) && (
               <p className="compliance-loading-hint">
                 {gapLoading && "Running gap analysis…"}

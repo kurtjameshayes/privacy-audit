@@ -95,6 +95,8 @@ export default function GatherPage() {
   const [companyName, setCompanyName] = useState("");
   const [jurisdiction, setJurisdiction] = useState("");
   const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
+  const [directUrl, setDirectUrl] = useState("");
+  const [showFileUploadModal, setShowFileUploadModal] = useState(false);
 
   const trimmedQuery = query.trim();
   const statuteAppendPrompt = "Privacy Statute Law full text";
@@ -160,6 +162,81 @@ export default function GatherPage() {
       setCrawlData((await response.json()) as CrawlResponse);
     } catch (caught) {
       setError(normalizeApiError(caught) || "Unable to crawl the selected URL.");
+    } finally {
+      setIsCrawling(false);
+    }
+  };
+
+  const handleDirectCrawl = async () => {
+    const url = directUrl.trim();
+    if (!url) {
+      setError("Please enter a URL to crawl.");
+      return;
+    }
+    setError(null);
+    const syntheticResult: GatherResult = {
+      title: url,
+      url,
+      description: "Direct crawl",
+      percent_match: 100,
+      score: 1,
+    };
+    setSelectedResult(syntheticResult);
+    setIsCrawling(true);
+    setCrawlData(null);
+    setSaveMessage(null);
+    try {
+      const response = await fetch("/api/crawl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, depth: 1, breadth: 1 }),
+      });
+      if (!response.ok) throw new Error(await response.text() || "Unable to crawl.");
+      setCrawlData((await response.json()) as CrawlResponse);
+    } catch (caught) {
+      setError(normalizeApiError(caught) || "Unable to crawl the URL.");
+      setSelectedResult(null);
+    } finally {
+      setIsCrawling(false);
+    }
+  };
+
+  const handleFileUpload = async (file: File) => {
+    setShowFileUploadModal(false);
+    setError(null);
+    const syntheticResult: GatherResult = {
+      title: file.name,
+      url: `file://${file.name}`,
+      description: "Uploaded file",
+      percent_match: 100,
+      score: 1,
+    };
+    setSelectedResult(syntheticResult);
+    setIsCrawling(true);
+    setCrawlData(null);
+    setSaveMessage(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("mode", mode);
+      const response = await fetch("/api/upload-document", {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) throw new Error(await response.text() || "Unable to process file.");
+      const data = (await response.json()) as { combined_text: string };
+      const text = data.combined_text || "";
+      setCrawlData({
+        url: syntheticResult.url,
+        combined_text: text,
+        pages_crawled: 1,
+        text_length: text.length,
+        breadth: 1,
+        depth: 1,
+      });
+    } catch (caught) {
+      setError(normalizeApiError(caught) || "Unable to process uploaded file.");
+      setSelectedResult(null);
     } finally {
       setIsCrawling(false);
     }
@@ -307,6 +384,39 @@ export default function GatherPage() {
                 {isSearching ? "Searching…" : "Gather results"}
               </button>
             </div>
+            <div className="direct-url-block">
+              <label className="field-label" htmlFor="direct-url">
+                Or enter URL to crawl directly
+              </label>
+              <div className="direct-url-row">
+                <input
+                  id="direct-url"
+                  type="url"
+                  value={directUrl}
+                  onChange={(e) => setDirectUrl(e.target.value)}
+                  placeholder="https://example.com/privacy-policy"
+                  className="direct-url-input"
+                />
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={handleDirectCrawl}
+                  disabled={isCrawling || !directUrl.trim()}
+                >
+                  {isCrawling ? "Crawling…" : "Crawl URL"}
+                </button>
+              </div>
+            </div>
+            <p className="gather-alt-link">
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => setShowFileUploadModal(true)}
+              >
+                Upload file
+              </button>
+              {" "}(PDF, TXT, HTML)
+            </p>
             {error ? (
               <div className="error-banner">
                 <span className="error-text">{error}</span>
@@ -529,6 +639,45 @@ export default function GatherPage() {
               >
                 View in Policies
               </Link>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showFileUploadModal ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card file-upload-dialog">
+            <div className="modal-header">
+              <div>
+                <p className="modal-title">Upload file</p>
+                <p className="modal-subtitle">
+                  Upload a PDF, TXT, or HTML file to add as a {mode === "policy" ? "policy" : "statute"}.
+                </p>
+              </div>
+              <button
+                className="ghost-button modal-close"
+                type="button"
+                onClick={() => setShowFileUploadModal(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <label className="file-upload-label">
+                <input
+                  type="file"
+                  accept=".pdf,.txt,.html,.htm"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleFileUpload(file);
+                    e.target.value = "";
+                  }}
+                  className="file-upload-input"
+                />
+                <span className="file-upload-button">Choose file</span>
+                <span className="file-upload-hint">PDF, TXT, or HTML</span>
+              </label>
             </div>
           </div>
         </div>
