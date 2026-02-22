@@ -637,6 +637,22 @@ export default function RunsPage() {
                       <pre className="run-detail-json">
                         {JSON.stringify(runDetail, null, 2)}
                       </pre>
+                    ) : (runDetail as Record<string, unknown>).status === "failed" ? (
+                      <div className="run-status-failed">
+                        <p className="run-status-message">Job failed</p>
+                        {(runDetail as Record<string, unknown>).error && (
+                          <p className="run-status-error">
+                            {String((runDetail as Record<string, unknown>).error)}
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => setDetailView("raw")}
+                        >
+                          View raw JSON
+                        </button>
+                      </div>
                     ) : (runDetail as Record<string, unknown>).status === "running" ||
                       (runDetail as Record<string, unknown>).status === "pending" ? (
                       <div className="run-status-running">
@@ -645,6 +661,13 @@ export default function RunsPage() {
                         <p className="run-status-hint">
                           Compliance analysis is in progress. Results will appear when complete.
                         </p>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => setDetailView("raw")}
+                        >
+                          View raw JSON
+                        </button>
                       </div>
                     ) : gapResult ? (
                       <div className="runs-gap-view">
@@ -656,15 +679,6 @@ export default function RunsPage() {
                           expandedGapIndex={expandedGapIndex}
                           onExpandGap={setExpandedGapIndex}
                         />
-                      </div>
-                    ) : (runDetail as Record<string, unknown>).status === "failed" ? (
-                      <div className="run-status-failed">
-                        <p className="run-status-message">Job failed</p>
-                        {(runDetail as Record<string, unknown>).error && (
-                          <p className="run-status-error">
-                            {String((runDetail as Record<string, unknown>).error)}
-                          </p>
-                        )}
                       </div>
                     ) : (
                       <div className="run-status-no-results">

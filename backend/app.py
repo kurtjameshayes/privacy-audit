@@ -872,8 +872,11 @@ def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
         doc.get("policy_document_id") or doc.get("company_name")
     ):
         pid = doc.get("policy_document_id")
+        gaps = doc.get("gaps", [])
+        summary = _normalize_gap_summary(gaps, doc.get("summary"))
+        result = {**doc, "summary": summary}
         return {
-            "result": doc,
+            "result": result,
             "request": {"policy_document_id": pid},
             "policy_document_id": pid,
             "run_id": _mongo_id_str(doc.get("_id")),
@@ -907,6 +910,8 @@ def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
             gaps.append(g)
     summary = {
         "addressed": sum(len(a.get("resolved_gaps", [])) for a in alerts),
+        "partial": 0,
+        "ambiguous": 0,
         "missing": sum(len(a.get("new_gaps", [])) for a in alerts),
         "conflicts": 0,
         "total_requirements": sum(
@@ -940,6 +945,21 @@ def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
         "completed_at": doc.get("analyzed_at", ""),
         "privacy_health_score": health_score,
     }
+
+
+def _normalize_gap_summary(gaps: list[dict[str, Any]], existing: dict[str, Any] | None) -> dict[str, Any]:
+    """Ensure summary includes partial and ambiguous counts from gaps."""
+    summary = dict(existing or {})
+    if gaps:
+        summary["total_requirements"] = len(gaps)
+        summary["addressed"] = sum(1 for g in gaps if g.get("status") == "addressed")
+        summary["partial"] = sum(1 for g in gaps if g.get("status") == "partial")
+        summary["ambiguous"] = sum(1 for g in gaps if g.get("status") == "ambiguous")
+        summary["missing"] = sum(1 for g in gaps if g.get("status") == "missing")
+        summary["conflicts"] = sum(1 for g in gaps if g.get("status") == "conflict")
+    summary.setdefault("partial", 0)
+    summary.setdefault("ambiguous", 0)
+    return summary
 
 
 def _mongo_id_str(rid: Any) -> str:
@@ -1029,6 +1049,8 @@ def _runs_from_compliance_run_log(
             "status": "completed",
             "summary": {
                 "addressed": summary.get("addressed", 0),
+                "partial": summary.get("partial", 0),
+                "ambiguous": summary.get("ambiguous", 0),
                 "missing": summary.get("missing", 0),
                 "conflicts": summary.get("conflicts", 0),
                 "total_requirements": summary.get("total_requirements", 0),
@@ -1193,6 +1215,9 @@ def compliance_gap_analysis() -> Any:
         save_results=save_results,
         num_rows=num_rows,
     )
+    gaps = result.get("gaps") or []
+    if isinstance(gaps, list):
+        result = {**result, "summary": _normalize_gap_summary(gaps, result.get("summary"))}
     if save_results:
         doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}
         if "error" in result:

@@ -519,7 +519,7 @@ def run_gap_analysis(
             "applicable_jurisdictions": jurisdictions,
             "analyzed_at": datetime.now(timezone.utc).isoformat(),
             "gaps": [],
-            "summary": {"total_requirements": 0, "missing": 0, "addressed": 0, "conflicts": 0},
+            "summary": {"total_requirements": 0, "missing": 0, "addressed": 0, "partial": 0, "ambiguous": 0, "conflicts": 0},
             "error": msg,
         }
     return data
