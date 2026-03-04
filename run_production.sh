@@ -9,4 +9,9 @@ if [ -d .venv ]; then
 fi
 
 pip install -q -r backend/requirements.txt
-exec gunicorn -w 1 -b 0.0.0.0:5120 --timeout 120 backend.app:app
+mkdir -p logs
+exec gunicorn -w 1 -b 0.0.0.0:5120 --timeout 120 \
+  --access-logfile logs/access.log \
+  --error-logfile logs/error.log \
+  --capture-output \
+  backend.app:app

@@ -65,10 +65,11 @@ the frontend with `npm run build` to serve static assets from Flask.
    ```bash
    ./run_production.sh
    ```
-   Or manually:
+   Logs: `logs/access.log`, `logs/error.log`. Or manually:
    ```bash
    source .venv/bin/activate
-   gunicorn -w 2 -b 0.0.0.0:5120 --timeout 120 backend.app:app
+   mkdir -p logs
+   gunicorn -w 2 -b 0.0.0.0:5120 --timeout 120 --access-logfile logs/access.log --error-logfile logs/error.log --capture-output backend.app:app
    ```
    For HTTPS, put nginx or another reverse proxy in front for SSL termination.
 

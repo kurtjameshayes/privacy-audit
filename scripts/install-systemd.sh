@@ -10,6 +10,7 @@ WORKERS="${WORKERS:-1}"
 SERVICE_NAME="privacy-audit"
 VENV_BIN="${APP_DIR}/.venv/bin/gunicorn"
 ENV_FILE="${APP_DIR}/.env"
+LOG_DIR="${APP_DIR}/logs"
 
 # Validate
 if [ ! -d "$APP_DIR" ]; then
@@ -26,6 +27,10 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "Warning: .env not found at $ENV_FILE. Create it from .env.example and add GATHER_API_BASE_URL, FIRECRAWL_API_KEY."
 fi
 
+# Create logs directory for service user
+mkdir -p "$LOG_DIR"
+chown "$APP_USER" "$LOG_DIR"
+
 # Generate service file
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 cat > "$SERVICE_FILE" << EOF
@@ -37,7 +42,7 @@ After=network.target
 Type=simple
 User=${APP_USER}
 WorkingDirectory=${APP_DIR}
-ExecStart=${VENV_BIN} -w ${WORKERS} -b 127.0.0.1:5120 --timeout 120 backend.app:app
+ExecStart=${VENV_BIN} -w ${WORKERS} -b 127.0.0.1:5120 --timeout 120 --access-logfile ${LOG_DIR}/access.log --error-logfile ${LOG_DIR}/error.log --capture-output backend.app:app
 Restart=always
 RestartSec=5
 Environment="PATH=${APP_DIR}/.venv/bin"
@@ -52,6 +57,7 @@ echo "  App dir:  ${APP_DIR}"
 echo "  User:     ${APP_USER}"
 echo "  Workers:  ${WORKERS}"
 echo "  Env:      ${ENV_FILE}"
+echo "  Logs:     ${LOG_DIR}/access.log, ${LOG_DIR}/error.log"
 echo ""
 
 systemctl daemon-reload

@@ -10,4 +10,5 @@ frontend/dist/
 frontend/.vite/
 backend/__pycache__/
 *.log
+logs/
 .DS_Store

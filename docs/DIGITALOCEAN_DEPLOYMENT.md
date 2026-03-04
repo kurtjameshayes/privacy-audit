@@ -64,7 +64,13 @@ sudo certbot --nginx -d your-domain.com
 
 ## 3. Systemd Service (run app on boot, auto-restart)
 
-Create `/etc/systemd/system/privacy-audit.service`:
+Use the install script (recommended):
+
+```bash
+sudo ./scripts/install-systemd.sh
+```
+
+Or create `/etc/systemd/system/privacy-audit.service` manually:
 
 ```ini
 [Unit]
@@ -75,16 +81,20 @@ After=network.target
 Type=simple
 User=devuser
 WorkingDirectory=/home/devuser/app/privacy-audit
-ExecStart=/home/devuser/app/privacy-audit/.venv/bin/gunicorn -w 2 -b 127.0.0.1:5120 --timeout 120 backend.app:app
+ExecStart=/home/devuser/app/privacy-audit/.venv/bin/gunicorn -w 2 -b 127.0.0.1:5120 --timeout 120 --access-logfile /home/devuser/app/privacy-audit/logs/access.log --error-logfile /home/devuser/app/privacy-audit/logs/error.log --capture-output backend.app:app
 Restart=always
 RestartSec=5
 Environment="PATH=/home/devuser/app/privacy-audit/.venv/bin"
+EnvironmentFile=/home/devuser/app/privacy-audit/.env
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-**Note:** Binding to `127.0.0.1:5120` (not `0.0.0.0`) is safer when nginx is in front—only localhost can reach gunicorn.
+**Notes:**
+- Binding to `127.0.0.1:5120` (not `0.0.0.0`) is safer when nginx is in front—only localhost can reach gunicorn.
+- Create the logs directory before starting: `mkdir -p /home/devuser/app/privacy-audit/logs && chown devuser /home/devuser/app/privacy-audit/logs`
+- Logs: `logs/access.log` (HTTP requests), `logs/error.log` (gunicorn and app errors). Use `journalctl -u privacy-audit` for systemd output.
 
 Enable and start:
 
@@ -112,7 +122,15 @@ Environment="PATH=/home/devuser/app/privacy-audit/.venv/bin"
 EnvironmentFile=/home/devuser/app/privacy-audit/.env
 ```
 
-## 5. Checklist
+## 5. Logs
+
+| Source | Location |
+|--------|----------|
+| Access log (HTTP requests) | `logs/access.log` (in app directory) |
+| Error log (gunicorn + app) | `logs/error.log` (in app directory) |
+| Systemd journal | `journalctl -u privacy-audit -f` |
+
+## 6. Checklist
 
 - [ ] Firewall: ports 80, 443 (and 22 for SSH) open
 - [ ] Nginx: installed, configured, proxying to 127.0.0.1:5120
