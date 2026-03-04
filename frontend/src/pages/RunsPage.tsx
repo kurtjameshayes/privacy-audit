@@ -14,7 +14,10 @@ function formatDate(value?: string): string {
   if (!value) return "—";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString();
+  return parsed.toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 }
 
 function getRunId(run: RunSummaryItem): string | null {
@@ -463,7 +466,7 @@ export default function RunsPage() {
                       data.runs.map((run) => {
                         const id = getRunId(run) ?? run.policy_document_id ?? "";
                         const displayId = run.run_id ?? run.job_id ?? "";
-                        const dateVal = run.completed_at ?? run.run_at ?? run.created_at;
+                        const dateVal = run.run_at ?? run.created_at ?? run.completed_at;
                         const typeVal = run.job_type ?? (Array.isArray(run.types) ? run.types.join(", ") : null);
                         const statusVal = run.status;
                         return (

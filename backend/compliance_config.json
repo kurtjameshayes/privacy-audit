@@ -2,8 +2,8 @@
   "gap_analysis_max_chunks_per_run": 50,
   "use_vector_search": false,
   "index_database_name": "privacy-compliance",
-  "index_collection_name": "statute_embeddings",
-  "policy_index_collection_name": "policy_embeddings",
+  "index_collection_name": "statute_sub_embeddings",
+  "policy_index_collection_name": "policy_sub_embeddings",
   "workflow_state_collection": "document_workflow_state",
   "default_jurisdictions": [
     "CA",

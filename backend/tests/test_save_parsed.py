@@ -5,6 +5,53 @@ from typing import Any
 from backend import app as app_module
 
 
+def test_save_parsed_runs_subsection_pipeline(monkeypatch: Any) -> None:
+    """Save-parsed runs create-subsections, vector-index, create-vector-index and sets vector_indexed."""
+    post_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if params.get("collection_name") == "statutes":
+            return {"documents": [{"document_id": "doc-ccpa", "jurisdiction": "CA"}]}, None
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        post_calls.append((endpoint, payload))
+        return {"ok": True}, None
+
+    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
+        return None, None
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/save-parsed",
+        json={
+            "database_name": "privacy-compliance",
+            "collection_name": "statute_chunks",
+            "document_id": "doc-ccpa",
+            "chunks": [
+                {
+                    "parsed_header_text": "Section 1",
+                    "parsed_text": "Text of section 1.",
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    endpoints = [e for e, _ in post_calls]
+    assert "/create-statute-subsections" in endpoints
+    assert "/vector-index" in endpoints
+    assert "/create-vector-index" in endpoints
+    vi_call = next((p for e, p in post_calls if e == "/vector-index"), None)
+    assert vi_call is not None
+    assert vi_call.get("text_column") == "subchunk_text"
+    assert vi_call.get("source_collection_name") == "statute_sub_chunks"
+
+
 def test_save_parsed_writes_each_section(monkeypatch: Any) -> None:
     calls: list[dict[str, Any]] = []
 
@@ -196,6 +243,50 @@ def test_save_parsed_preserves_llm_fields(monkeypatch: Any) -> None:
     assert saved_document["jurisdiction"] == "US"
     assert saved_document["section"] == "1.2"
     assert "_id" not in saved_document
+
+
+def test_save_parsed_removes_linefeeds(monkeypatch: Any) -> None:
+    """Chunk header and text are normalized to single-line strings (no newlines)."""
+    calls: list[dict[str, Any]] = []
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        calls.append(payload)
+        return {"ok": True}, None
+
+    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
+        return None, None
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/save-parsed",
+        json={
+            "database_name": "privacy-compliance",
+            "collection_name": "policy_chunks",
+            "document_id": "doc-789",
+            "chunks": [
+                {
+                    "chunk_header_text": "Header\nWith\nLines",
+                    "chunk_text": "First paragraph.\n\nSecond paragraph.\nMore text.",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    chunk_calls = [c for c in calls if c.get("collection_name") == "policy_chunks"]
+    assert len(chunk_calls) == 1
+    saved_document = chunk_calls[0]["document"]
+    assert saved_document["chunk_header_text"] == "Header With Lines"
+    assert saved_document["chunk_text"] == "First paragraph. Second paragraph. More text."
+    assert "\n" not in saved_document["chunk_header_text"]
+    assert "\n" not in saved_document["chunk_text"]
 
 
 def test_save_parsed_deletes_existing_documents(monkeypatch: Any) -> None:

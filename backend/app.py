@@ -62,6 +62,10 @@ STATUTE_CHUNK_COLLECTION = os.getenv("STATUTE_CHUNK_COLLECTION") or "statute_chu
 COMPLIANCE_RESULTS_COLLECTION = "compliance_results"
 COMPLIANCE_ALERTS_COLLECTION = "compliance_alerts"
 COMPLIANCE_RUN_LOG_COLLECTION = "compliance_run_log"
+STATUTE_SUB_CHUNK_COLLECTION = "statute_sub_chunks"
+POLICY_SUB_CHUNK_COLLECTION = "policy_sub_chunks"
+STATUTE_SUB_EMBEDDINGS_COLLECTION = "statute_sub_embeddings"
+POLICY_SUB_EMBEDDINGS_COLLECTION = "policy_sub_embeddings"
 
 STATIC_FOLDER = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 
@@ -157,6 +161,70 @@ def forward_delete(
         return response.json(), None
     except ValueError:
         return {"raw": response.text}, None
+
+
+def _run_subsection_pipeline(
+    document_id: str,
+    document_type: str,
+    database_name: str,
+) -> Tuple[str | None, int | None]:
+    """
+    Run subsection pipeline: create subsections -> vector-index -> create-vector-index.
+    Returns (error_message, status_code) on failure, or (None, None) on success.
+    """
+    if document_type == "statute":
+        subsections_endpoint = "/create-statute-subsections"
+        source_collection = STATUTE_CHUNK_COLLECTION
+        dest_sub_collection = STATUTE_SUB_CHUNK_COLLECTION
+        embeddings_collection = STATUTE_SUB_EMBEDDINGS_COLLECTION
+        filter_fields = ["jurisdiction", "document_id"]
+    else:
+        subsections_endpoint = "/create-policy-subsections"
+        source_collection = POLICY_CHUNK_COLLECTION
+        dest_sub_collection = POLICY_SUB_CHUNK_COLLECTION
+        embeddings_collection = POLICY_SUB_EMBEDDINGS_COLLECTION
+        filter_fields = ["document_id"]
+
+    subsections_payload: dict[str, Any] = {
+        "column": "chunk_text",
+        "database": database_name,
+        "destination_collection": dest_sub_collection,
+        "parse_prompt": None,
+        "source_collection": source_collection,
+        "source_query": {"document_id": document_id},
+        "subsection_column": "subchunk_text",
+    }
+    _, err = forward_post(subsections_endpoint, subsections_payload)
+    if err:
+        msg, status = err
+        return msg, status
+
+    source_query = {"document_id": document_id}
+    vector_index_payload: dict[str, Any] = {
+        "source_database_name": database_name,
+        "source_collection_name": dest_sub_collection,
+        "index_database_name": database_name,
+        "index_collection_name": embeddings_collection,
+        "source_query": source_query,
+        "text_column": "subchunk_text",
+    }
+    _, err = forward_post("/vector-index", vector_index_payload)
+    if err:
+        msg, status = err
+        return msg, status
+
+    create_index_payload: dict[str, Any] = {
+        "collection_name": embeddings_collection,
+        "database_name": database_name,
+        "filter_fields": filter_fields,
+        "index_name": "vector_index",
+    }
+    _, err = forward_post("/create-vector-index", create_index_payload)
+    if err:
+        msg, status = err
+        return msg, status
+
+    return None, None
 
 
 @app.route("/api/health", methods=["GET"])
@@ -483,14 +551,19 @@ def save_parsed_document() -> Any:
             return jsonify({
                 "error": f"Chunk at index {index} must be an object."
             }), 400
-        chunk_header_text = str(
-            chunk.get("parsed_header_text")
-            or chunk.get("chunk_header_text")
-            or ""
-        ).strip()
-        chunk_text = str(
-            chunk.get("parsed_text") or chunk.get("chunk_text") or ""
-        ).strip()
+        def _single_line(s: str) -> str:
+            return " ".join(s.split())
+
+        chunk_header_text = _single_line(
+            str(
+                chunk.get("parsed_header_text")
+                or chunk.get("chunk_header_text")
+                or ""
+            )
+        )
+        chunk_text = _single_line(
+            str(chunk.get("parsed_text") or chunk.get("chunk_text") or "")
+        )
         if not chunk_header_text and not chunk_text:
             return jsonify({
                 "error": f"Chunk at index {index} is missing text."
@@ -525,7 +598,7 @@ def save_parsed_document() -> Any:
         saved_records.append(data)
 
     wf_coll = load_compliance_config().get("workflow_state_collection", "document_workflow_state")
-    doc_type = "statute" if collection_name == "statute_chunks" else "policy"
+    doc_type = "statute" if collection_name == STATUTE_CHUNK_COLLECTION else "policy"
     upsert_workflow_state(
         forward_get,
         forward_post,
@@ -534,6 +607,21 @@ def save_parsed_document() -> Any:
         document_id,
         doc_type,
         "parsed",
+        wf_coll,
+    )
+
+    err_msg, err_status = _run_subsection_pipeline(document_id, doc_type, database_name)
+    if err_msg is not None:
+        return jsonify({"error": err_msg}), err_status or 500
+
+    upsert_workflow_state(
+        forward_get,
+        forward_post,
+        forward_delete,
+        database_name,
+        document_id,
+        doc_type,
+        "vector_indexed",
         wf_coll,
     )
 
@@ -577,6 +665,8 @@ def vector_index() -> Any:
             proxy_payload["source_query"] = json.dumps(source_query)
         else:
             proxy_payload["source_query"] = str(source_query)
+    if payload.get("text_column"):
+        proxy_payload["text_column"] = str(payload["text_column"])
 
     data, error = forward_post("/vector-index", proxy_payload)
     if error:
@@ -622,6 +712,106 @@ def vector_index() -> Any:
             )
 
     return jsonify(data)
+
+
+@app.route("/api/create-statute-subsections", methods=["POST"])
+def create_statute_subsections() -> Any:
+    """Proxy create-statute-subsections to upstream. Creates statute_sub_chunks from statute_chunks."""
+    payload = request.get_json(silent=True) or {}
+    document_id = str(payload.get("document_id", "")).strip()
+    database_name = str(payload.get("database_name", "")).strip() or POLICY_DATABASE
+    if not document_id:
+        return jsonify({"error": "document_id is required."}), 400
+    proxy_payload: dict[str, Any] = {
+        "column": "chunk_text",
+        "database": database_name,
+        "destination_collection": STATUTE_SUB_CHUNK_COLLECTION,
+        "parse_prompt": None,
+        "source_collection": STATUTE_CHUNK_COLLECTION,
+        "source_query": {"document_id": document_id},
+        "subsection_column": "subchunk_text",
+    }
+    data, error = forward_post("/create-statute-subsections", proxy_payload)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/create-policy-subsections", methods=["POST"])
+def create_policy_subsections() -> Any:
+    """Proxy create-policy-subsections to upstream. Creates policy_sub_chunks from policy_chunks."""
+    payload = request.get_json(silent=True) or {}
+    document_id = str(payload.get("document_id", "")).strip()
+    database_name = str(payload.get("database_name", "")).strip() or POLICY_DATABASE
+    if not document_id:
+        return jsonify({"error": "document_id is required."}), 400
+    proxy_payload: dict[str, Any] = {
+        "column": "chunk_text",
+        "database": database_name,
+        "destination_collection": POLICY_SUB_CHUNK_COLLECTION,
+        "parse_prompt": None,
+        "source_collection": POLICY_CHUNK_COLLECTION,
+        "source_query": {"document_id": document_id},
+        "subsection_column": "subchunk_text",
+    }
+    data, error = forward_post("/create-policy-subsections", proxy_payload)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/create-vector-index", methods=["POST"])
+def create_vector_index() -> Any:
+    """Proxy create-vector-index to upstream. Creates Atlas/vector index on embeddings collection."""
+    payload = request.get_json(silent=True) or {}
+    collection_name = str(payload.get("collection_name", "")).strip()
+    database_name = str(payload.get("database_name", "")).strip() or POLICY_DATABASE
+    filter_fields = payload.get("filter_fields")
+    index_name = str(payload.get("index_name", "")).strip() or "vector_index"
+    if not collection_name:
+        return jsonify({"error": "collection_name is required."}), 400
+    proxy_payload: dict[str, Any] = {
+        "collection_name": collection_name,
+        "database_name": database_name,
+        "filter_fields": filter_fields if isinstance(filter_fields, list) else [],
+        "index_name": index_name,
+    }
+    data, error = forward_post("/create-vector-index", proxy_payload)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/run-subsection-pipeline", methods=["POST"])
+def run_subsection_pipeline() -> Any:
+    """
+    Run the subsection pipeline: create subsections -> vector-index -> create-vector-index.
+    Requires chunks to already exist for the document. On success, upserts vector_indexed.
+    """
+    payload = request.get_json(silent=True) or {}
+    document_id = str(payload.get("document_id", "")).strip()
+    database_name = str(payload.get("database_name", "")).strip() or POLICY_DATABASE
+    doc_type = "statute" if payload.get("mode") == "statute" else "policy"
+    if not document_id:
+        return jsonify({"error": "document_id is required."}), 400
+    err_msg, err_status = _run_subsection_pipeline(document_id, doc_type, database_name)
+    if err_msg is not None:
+        return jsonify({"error": err_msg}), err_status or 500
+    wf_coll = load_compliance_config().get("workflow_state_collection", "document_workflow_state")
+    upsert_workflow_state(
+        forward_get,
+        forward_post,
+        forward_delete,
+        database_name,
+        document_id,
+        doc_type,
+        "vector_indexed",
+        wf_coll,
+    )
+    return jsonify({"message": "Subsections and vector index created."})
 
 
 @app.route("/api/vector-search", methods=["POST"])

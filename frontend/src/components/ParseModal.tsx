@@ -120,8 +120,8 @@ export default function ParseModal({
   const [parseSelections, setParseSelections] = useState<
     Record<string, boolean>
   >({});
-  const [isVectorIndexing, setIsVectorIndexing] = useState(false);
-  const [vectorIndexMessage, setVectorIndexMessage] = useState<string | null>(null);
+  const [isIndexing, setIsIndexing] = useState(false);
+  const [indexMessage, setIndexMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!doc || !documentId) return;
@@ -230,9 +230,21 @@ export default function ParseModal({
           }),
         }),
       });
-      if (!res.ok) throw new Error(await res.text() || "Unable to save.");
+      if (!res.ok) {
+        const text = await res.text();
+        let errMsg = "Unable to save.";
+        try {
+          const errData = JSON.parse(text) as { error?: string };
+          if (errData?.error) errMsg = errData.error;
+        } catch {
+          if (text) errMsg = text;
+        }
+        throw new Error(errMsg);
+      }
       const data = (await res.json()) as { message?: string };
-      setSaveParsedMessage(data.message || "Saved parsed document.");
+      setSaveParsedMessage(
+        data.message || "Saved parsed document. Subsections and vector index created."
+      );
     } catch (err) {
       setSaveParsedMessage(
         normalizeApiError(err) || "Unable to save parsed document."
@@ -242,38 +254,39 @@ export default function ParseModal({
     }
   };
 
-  const handleVectorIndex = async () => {
+  const handleIndex = async () => {
     if (!documentId) return;
-    const sourceCollection = mode === "policy" ? "policy_chunks" : "statute_chunks";
-    const indexCollection = mode === "policy" ? "policy_embeddings" : "statute_embeddings";
-    setIsVectorIndexing(true);
-    setVectorIndexMessage(null);
+    setIsIndexing(true);
+    setIndexMessage(null);
     try {
-      const res = await fetch("/api/vector-index", {
+      const res = await fetch("/api/run-subsection-pipeline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          source_database_name: "privacy-compliance",
-          source_collection_name: sourceCollection,
-          index_database_name: "privacy-compliance",
-          index_collection_name: indexCollection,
-          source_query: { document_id: documentId },
-          document_ids: [documentId],
+          database_name: "privacy-compliance",
+          document_id: documentId,
+          mode,
         }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(
-          (err as { error?: string }).error || (await res.text()) || "Unable to vector index."
-        );
+        const text = await res.text();
+        let errMsg = "Unable to index.";
+        try {
+          const errData = JSON.parse(text) as { error?: string };
+          if (errData?.error) errMsg = errData.error;
+        } catch {
+          if (text) errMsg = text;
+        }
+        throw new Error(errMsg);
       }
-      setVectorIndexMessage("Document vector indexed successfully.");
+      const data = (await res.json()) as { message?: string };
+      setIndexMessage(data.message || "Subsections and vector index created.");
     } catch (err) {
-      setVectorIndexMessage(
-        normalizeApiError(err) || "Unable to vector index document."
+      setIndexMessage(
+        normalizeApiError(err) || "Unable to run subsection pipeline."
       );
     } finally {
-      setIsVectorIndexing(false);
+      setIsIndexing(false);
     }
   };
 
@@ -424,10 +437,10 @@ export default function ParseModal({
               setParseResults([]);
               setParseError(null);
               setSaveParsedMessage(null);
-              setVectorIndexMessage(null);
+              setIndexMessage(null);
               setParseSelections({});
             }}
-            disabled={isParsing || isSavingParsed || isVectorIndexing}
+            disabled={isParsing || isSavingParsed || isIndexing}
           >
             Reset
           </button>
@@ -435,21 +448,21 @@ export default function ParseModal({
             className="ghost-button"
             type="button"
             onClick={handleSaveParsed}
-            disabled={isSavingParsed || parseResults.length === 0}
+            disabled={isSavingParsed || isIndexing || parseResults.length === 0}
           >
             {isSavingParsed ? "Saving…" : "Save parsed"}
           </button>
           <button
             className="primary-button"
             type="button"
-            onClick={handleVectorIndex}
-            disabled={isVectorIndexing || parseResults.length === 0}
+            onClick={handleIndex}
+            disabled={isIndexing || !documentId}
           >
-            {isVectorIndexing ? "Indexing…" : "Vector index"}
+            {isIndexing ? "Indexing…" : "Index"}
           </button>
         </div>
-        {(saveParsedMessage || vectorIndexMessage) ? (
-          <div className="modal-footer">{vectorIndexMessage || saveParsedMessage}</div>
+        {(saveParsedMessage || indexMessage) ? (
+          <div className="modal-footer">{indexMessage || saveParsedMessage}</div>
         ) : null}
       </div>
     </div>
