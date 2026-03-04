@@ -551,7 +551,17 @@ export default function RunsPage() {
               >
           <div className="runs-detail-panel runs-detail-panel--enhanced">
                 <div className="runs-detail-header">
-                  <h4 id="runs-detail-title">Run detail</h4>
+                  <div className="runs-detail-header-top">
+                    <h4 id="runs-detail-title">Run detail</h4>
+                    <button
+                      className="ghost-button modal-close runs-close-btn"
+                      type="button"
+                      onClick={() => setSelectedRunId(null)}
+                      aria-label="Close"
+                    >
+                      ×
+                    </button>
+                  </div>
                   <div className="runs-detail-actions">
                     <div className="runs-view-toggle">
                       {gapResult && (
@@ -620,6 +630,7 @@ export default function RunsPage() {
                   </div>
                 </div>
 
+                <div className="runs-detail-content">
                 {detailLoading ? (
                   <div className="loading-state">
                     <span className="loader" />
@@ -702,13 +713,7 @@ export default function RunsPage() {
                 ) : (
                   <p>Failed to load run detail.</p>
                 )}
-                <button
-                  className="ghost-button runs-close-btn"
-                  type="button"
-                  onClick={() => setSelectedRunId(null)}
-                >
-                  Close
-                </button>
+                </div>
           </div>
               </div>
             </div>
