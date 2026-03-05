@@ -1176,6 +1176,18 @@ def _fetch_documents(collection: str) -> list[dict[str, Any]]:
     return []
 
 
+def _run_timestamp(doc: dict[str, Any]) -> str:
+    """Extract run timestamp from doc; upstream may use run_at, analyzed_at, created_at, completed_at, or started_at."""
+    return (
+        doc.get("run_at")
+        or doc.get("analyzed_at")
+        or doc.get("created_at")
+        or doc.get("completed_at")
+        or doc.get("started_at")
+        or ""
+    )
+
+
 def _runs_from_compliance_run_log(
     limit: int, offset: int,
     policy_document_id: str = "",
@@ -1189,7 +1201,7 @@ def _runs_from_compliance_run_log(
     run_log_docs = _fetch_documents(COMPLIANCE_RUN_LOG_COLLECTION)
     for doc in run_log_docs:
         run_id = _mongo_id_str(doc.get("_id"))
-        analyzed_at = doc.get("analyzed_at", "")
+        analyzed_at = _run_timestamp(doc)
         alerts = doc.get("alerts", [])
         pid = doc.get("policy_document_id", "")
         company_name = doc.get("company_name")
@@ -1225,7 +1237,7 @@ def _runs_from_compliance_run_log(
     results_docs = _fetch_documents(COMPLIANCE_RESULTS_COLLECTION)
     for doc in results_docs:
         run_id = _mongo_id_str(doc.get("_id"))
-        run_at = doc.get("run_at", "")
+        run_at = _run_timestamp(doc)
         summary = doc.get("summary", {})
         all_runs.append({
             "run_id": run_id,
