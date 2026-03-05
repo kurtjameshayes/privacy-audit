@@ -982,6 +982,22 @@ input[type="text"]:focus {
   border-top: 1px solid var(--border);
 }
 
+.operation-confirmation {
+  font-weight: 500;
+}
+
+.operation-confirmation--success {
+  background: rgba(22, 101, 52, 0.08);
+  border-color: rgba(22, 101, 52, 0.25);
+  color: #166534;
+}
+
+.operation-confirmation--error {
+  background: rgba(155, 22, 22, 0.08);
+  border-color: rgba(155, 22, 22, 0.2);
+  color: #7a1a1a;
+}
+
 .parse-modal {
   width: min(1200px, 100%);
 }

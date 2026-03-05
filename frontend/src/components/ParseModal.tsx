@@ -117,11 +117,15 @@ export default function ParseModal({
   const [saveParsedMessage, setSaveParsedMessage] = useState<string | null>(
     null
   );
+  const [saveParsedSuccess, setSaveParsedSuccess] = useState<boolean | null>(
+    null
+  );
   const [parseSelections, setParseSelections] = useState<
     Record<string, boolean>
   >({});
   const [isIndexing, setIsIndexing] = useState(false);
   const [indexMessage, setIndexMessage] = useState<string | null>(null);
+  const [indexSuccess, setIndexSuccess] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!doc || !documentId) return;
@@ -169,6 +173,7 @@ export default function ParseModal({
     setIsParsing(true);
     setParseError(null);
     setSaveParsedMessage(null);
+    setSaveParsedSuccess(null);
     try {
       const res = await fetch("/api/parse-llm", {
         method: "POST",
@@ -206,6 +211,7 @@ export default function ParseModal({
     }
     setIsSavingParsed(true);
     setSaveParsedMessage(null);
+    setSaveParsedSuccess(null);
     try {
       const res = await fetch("/api/save-parsed", {
         method: "POST",
@@ -243,12 +249,14 @@ export default function ParseModal({
       }
       const data = (await res.json()) as { message?: string };
       setSaveParsedMessage(
-        data.message || "Saved parsed document. Subsections and vector index created."
+        data.message || "Saved parsed document information. Subsections and vector index created."
       );
+      setSaveParsedSuccess(true);
     } catch (err) {
       setSaveParsedMessage(
         normalizeApiError(err) || "Unable to save parsed document."
       );
+      setSaveParsedSuccess(false);
     } finally {
       setIsSavingParsed(false);
     }
@@ -258,6 +266,7 @@ export default function ParseModal({
     if (!documentId) return;
     setIsIndexing(true);
     setIndexMessage(null);
+    setIndexSuccess(null);
     try {
       const res = await fetch("/api/run-subsection-pipeline", {
         method: "POST",
@@ -281,10 +290,12 @@ export default function ParseModal({
       }
       const data = (await res.json()) as { message?: string };
       setIndexMessage(data.message || "Subsections and vector index created.");
+      setIndexSuccess(true);
     } catch (err) {
       setIndexMessage(
         normalizeApiError(err) || "Unable to run subsection pipeline."
       );
+      setIndexSuccess(false);
     } finally {
       setIsIndexing(false);
     }
@@ -437,7 +448,9 @@ export default function ParseModal({
               setParseResults([]);
               setParseError(null);
               setSaveParsedMessage(null);
+              setSaveParsedSuccess(null);
               setIndexMessage(null);
+              setIndexSuccess(null);
               setParseSelections({});
             }}
             disabled={isParsing || isSavingParsed || isIndexing}
@@ -462,7 +475,17 @@ export default function ParseModal({
           </button>
         </div>
         {(saveParsedMessage || indexMessage) ? (
-          <div className="modal-footer">{indexMessage || saveParsedMessage}</div>
+          <div
+            className={`modal-footer operation-confirmation ${
+              (indexMessage ? indexSuccess : saveParsedSuccess) === true
+                ? "operation-confirmation--success"
+                : (indexMessage ? indexSuccess : saveParsedSuccess) === false
+                  ? "operation-confirmation--error"
+                  : ""
+            }`}
+          >
+            {indexMessage ?? saveParsedMessage}
+          </div>
         ) : null}
       </div>
     </div>
