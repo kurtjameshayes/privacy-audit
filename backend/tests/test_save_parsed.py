@@ -44,9 +44,9 @@ def test_save_parsed_runs_subsection_pipeline(monkeypatch: Any) -> None:
     assert response.status_code == 200
     endpoints = [e for e, _ in post_calls]
     assert "/create-statute-subsections" in endpoints
-    assert "/vector-index" in endpoints
+    assert "/create-embeddings" in endpoints
     assert "/create-vector-index" in endpoints
-    vi_call = next((p for e, p in post_calls if e == "/vector-index"), None)
+    vi_call = next((p for e, p in post_calls if e == "/create-embeddings"), None)
     assert vi_call is not None
     assert vi_call.get("text_column") == "subchunk_text"
     assert vi_call.get("source_collection_name") == "statute_sub_chunks"

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
 import { apiGet, apiPost } from "../api/client";
 import { GapAnalysisResult } from "../components/GapAnalysisView";
 import type {
@@ -18,6 +19,86 @@ function formatDate(value?: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+const JOB_TYPE_LABELS: Record<string, string> = {
+  gap_analysis: "Gap analysis",
+  health_score: "Health score",
+  gap_v3: "Gap v3",
+  gap_v4: "Gap v4",
+  regulatory_drift: "Regulatory drift",
+  applicability: "Applicability",
+  multi_jurisdictional: "Multi-jurisdictional",
+};
+
+function formatJobType(value: string): string {
+  return JOB_TYPE_LABELS[value] ?? value.replace(/_/g, " ");
+}
+
+const COMPONENT_LABELS: Record<string, string> = {
+  requirements_total: "Requirements total",
+  addressed: "Addressed",
+  missing: "Missing",
+  conflicts: "Conflicts",
+  raw_ratio: "Raw ratio",
+  conflict_penalty_applied: "Conflict penalty applied",
+};
+
+function formatComponentValue(key: string, value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return String(value);
+  return String(value);
+}
+
+const SCORE_ASSESSMENT_TEXT_KEYS = [
+  "score_assessment_text",
+  "score_assessment",
+  "report",
+  "assessment_text",
+  "report_text",
+  "summary_text",
+  "narrative",
+  "assessment_report",
+];
+
+function getScoreAssessmentText(detail: RunDetail | null): string | null {
+  if (!detail || typeof detail !== "object") return null;
+  const d = detail as Record<string, unknown>;
+  const result = d.result as Record<string, unknown> | undefined;
+  const source = result ?? d;
+  for (const key of SCORE_ASSESSMENT_TEXT_KEYS) {
+    const val = source[key];
+    if (typeof val === "string") {
+      const trimmed = val.trim();
+      if (trimmed.length > 0) return trimmed;
+    }
+  }
+  return null;
+}
+
+function getScoreAssessmentResult(detail: RunDetail | null): {
+  privacy_health_score: number | null;
+  score_breakdown?: Record<string, unknown>;
+  components?: Record<string, unknown>;
+  error?: string;
+  reportText?: string | null;
+} | null {
+  if (!detail || typeof detail !== "object") return null;
+  const d = detail as Record<string, unknown>;
+  const jobType = d.job_type as string | undefined;
+  const result = d.result as Record<string, unknown> | undefined;
+  const score = result?.privacy_health_score ?? d.privacy_health_score;
+  const hasScoreData = score != null || result?.score_breakdown || result?.components || d.score_breakdown || d.components;
+  if (jobType !== "health_score" && !hasScoreData) return null;
+  const reportText = getScoreAssessmentText(detail);
+  return {
+    privacy_health_score: typeof score === "number" ? score : null,
+    score_breakdown: (result?.score_breakdown ?? d.score_breakdown) as Record<string, unknown> | undefined,
+    components: (result?.components ?? d.components) as Record<string, unknown> | undefined,
+    error: (result?.error ?? d.error) as string | undefined,
+    reportText: reportText ?? undefined,
+  };
 }
 
 function getRunId(run: RunSummaryItem): string | null {
@@ -70,7 +151,11 @@ function RunParametersCard({
         {jobType && (
           <>
             <dt>Job type</dt>
-            <dd>{jobType}</dd>
+            <dd>
+              <span className={`job-type-badge job-type-${jobType.replace(/[^a-z0-9]/gi, "-").toLowerCase()}`}>
+                {formatJobType(jobType)}
+              </span>
+            </dd>
           </>
         )}
         {status && (
@@ -157,6 +242,13 @@ export default function RunsPage() {
     () => toGapAnalysisResponse(runDetail as RunDetail | null),
     [runDetail]
   );
+
+  const scoreAssessmentResult = useMemo(
+    () => getScoreAssessmentResult(runDetail as RunDetail | null),
+    [runDetail]
+  );
+
+  const runJobType = (runDetail as Record<string, unknown> | null)?.job_type as string | undefined;
 
   const gapFilteredItems = useMemo(() => {
     const gaps = gapResult?.gaps ?? [];
@@ -406,7 +498,7 @@ export default function RunsPage() {
               type="text"
               value={types}
               onChange={(e) => setTypes(e.target.value)}
-              placeholder="gap, health_score, multi_jurisdictional, applicability"
+              placeholder="gap_analysis, health_score, gap_v3, gap_v4"
             />
           </div>
           <button
@@ -498,9 +590,12 @@ export default function RunsPage() {
                             </td>
                             <td>{run.privacy_health_score ?? "—"}</td>
                             <td>
-                              {run.summary
-                                ? `${(run.summary as { addressed?: number }).addressed ?? "—"}/${(run.summary as { total_requirements?: number }).total_requirements ?? "—"} addressed`
-                                : "—"}
+                              {(() => {
+                                const s = run.summary as { total_requirements?: number; addressed?: number; missing?: number; conflicts?: number; partial?: number; ambiguous?: number } | undefined;
+                                if (!s) return "—";
+                                const total = s.total_requirements ?? (s.addressed ?? 0) + (s.missing ?? 0) + (s.conflicts ?? 0) + (s.partial ?? 0) + (s.ambiguous ?? 0);
+                                return `${total} processed`;
+                              })()}
                             </td>
                             <td>{typeVal ?? "—"}</td>
                           </tr>
@@ -694,11 +789,69 @@ export default function RunsPage() {
                           onExpandGap={setExpandedGapIndex}
                         />
                       </div>
+                    ) : runJobType === "health_score" && scoreAssessmentResult ? (
+                      <div className="runs-score-assessment">
+                        <h5 className="runs-score-assessment-title">Score assessment</h5>
+                        <div className="runs-score-assessment-content">
+                          {scoreAssessmentResult.reportText && (
+                            <div className="runs-score-assessment-text">
+                              <ReactMarkdown>{scoreAssessmentResult.reportText}</ReactMarkdown>
+                            </div>
+                          )}
+                          {scoreAssessmentResult.error && (
+                            <p className="runs-score-error">{scoreAssessmentResult.error}</p>
+                          )}
+                          {scoreAssessmentResult.privacy_health_score != null ? (
+                            <div className="runs-score-value">
+                              <span className="runs-score-number">{scoreAssessmentResult.privacy_health_score}</span>
+                              <span className="runs-score-label">Privacy health score</span>
+                            </div>
+                          ) : !scoreAssessmentResult.error ? (
+                            <p className="runs-score-unavailable">Score unavailable</p>
+                          ) : null}
+                          {scoreAssessmentResult.components && Object.keys(scoreAssessmentResult.components).length > 0 && (
+                            <dl className="runs-score-components">
+                              {Object.entries(scoreAssessmentResult.components).map(([k, v]) => (
+                                <div key={k}>
+                                  <dt>{COMPONENT_LABELS[k] ?? k.replace(/_/g, " ")}</dt>
+                                  <dd>{formatComponentValue(k, v)}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          )}
+                          {scoreAssessmentResult.score_breakdown && Object.keys(scoreAssessmentResult.score_breakdown).length > 0 && (
+                            <div className="runs-score-breakdown">
+                              <h6 className="runs-score-breakdown-title">Score breakdown</h6>
+                              {Object.entries(scoreAssessmentResult.score_breakdown).map(([sectionKey, sectionVal]) => {
+                                if (typeof sectionVal !== "object" || sectionVal === null || Array.isArray(sectionVal)) return null;
+                                const entries = Object.entries(sectionVal as Record<string, unknown>);
+                                if (entries.length === 0) return null;
+                                const sectionLabel = sectionKey === "by_jurisdiction" ? "By jurisdiction" : sectionKey === "by_category" ? "By category" : sectionKey.replace(/_/g, " ");
+                                return (
+                                  <div key={sectionKey} className="runs-score-breakdown-section">
+                                    <p className="runs-score-breakdown-section-label">{sectionLabel}</p>
+                                    <table className="runs-score-breakdown-table">
+                                      <tbody>
+                                        {entries.map(([k, v]) => (
+                                          <tr key={k}>
+                                            <td>{k.replace(/_/g, " ")}</td>
+                                            <td>{formatComponentValue(k, v)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     ) : (
                       <div className="run-status-no-results">
                         <p className="run-status-message">No compliance results</p>
                         <p className="run-status-hint">
-                          This run has no gap analysis results to display.
+                          This run has no gap analysis or score assessment results to display.
                         </p>
                         <button
                           type="button"

@@ -62,10 +62,12 @@ STATUTE_CHUNK_COLLECTION = os.getenv("STATUTE_CHUNK_COLLECTION") or "statute_chu
 COMPLIANCE_RESULTS_COLLECTION = "compliance_results"
 COMPLIANCE_ALERTS_COLLECTION = "compliance_alerts"
 COMPLIANCE_RUN_LOG_COLLECTION = "compliance_run_log"
+COMPLIANCE_JOBS_COLLECTION = "compliance_jobs"
 STATUTE_SUB_CHUNK_COLLECTION = "statute_sub_chunks"
 POLICY_SUB_CHUNK_COLLECTION = "policy_sub_chunks"
 STATUTE_SUB_EMBEDDINGS_COLLECTION = "statute_sub_embeddings"
 POLICY_SUB_EMBEDDINGS_COLLECTION = "policy_sub_embeddings"
+POLICY_LEGAL_EMBEDDINGS_COLLECTION = "policy_legal_embeddings"
 
 STATIC_FOLDER = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 
@@ -169,7 +171,8 @@ def _run_subsection_pipeline(
     database_name: str,
 ) -> Tuple[str | None, int | None]:
     """
-    Run subsection pipeline: create subsections -> vector-index -> create-vector-index.
+    Run subsection pipeline: (statute only: create subsections) -> vector-index -> create-vector-index.
+    For policies, skip create-policy-subsections and index policy_chunks directly.
     Returns (error_message, status_code) on failure, or (None, None) on success.
     """
     if document_type == "statute":
@@ -178,37 +181,40 @@ def _run_subsection_pipeline(
         dest_sub_collection = STATUTE_SUB_CHUNK_COLLECTION
         embeddings_collection = STATUTE_SUB_EMBEDDINGS_COLLECTION
         filter_fields = ["jurisdiction", "document_id"]
+        vector_source_collection = dest_sub_collection
+        text_column = "subchunk_text"
     else:
-        subsections_endpoint = "/create-policy-subsections"
         source_collection = POLICY_CHUNK_COLLECTION
-        dest_sub_collection = POLICY_SUB_CHUNK_COLLECTION
-        embeddings_collection = POLICY_SUB_EMBEDDINGS_COLLECTION
+        embeddings_collection = POLICY_LEGAL_EMBEDDINGS_COLLECTION
         filter_fields = ["document_id"]
+        vector_source_collection = source_collection
+        text_column = "chunk_text"
 
-    subsections_payload: dict[str, Any] = {
-        "column": "chunk_text",
-        "database": database_name,
-        "destination_collection": dest_sub_collection,
-        "parse_prompt": None,
-        "source_collection": source_collection,
-        "source_query": {"document_id": document_id},
-        "subsection_column": "subchunk_text",
-    }
-    _, err = forward_post(subsections_endpoint, subsections_payload)
-    if err:
-        msg, status = err
-        return msg, status
+    if document_type == "statute":
+        subsections_payload: dict[str, Any] = {
+            "column": "chunk_text",
+            "database": database_name,
+            "destination_collection": dest_sub_collection,
+            "parse_prompt": None,
+            "source_collection": source_collection,
+            "source_query": {"document_id": document_id},
+            "subsection_column": "subchunk_text",
+        }
+        _, err = forward_post(subsections_endpoint, subsections_payload)
+        if err:
+            msg, status = err
+            return msg, status
 
     source_query = {"document_id": document_id}
-    vector_index_payload: dict[str, Any] = {
+    create_embeddings_payload: dict[str, Any] = {
         "source_database_name": database_name,
-        "source_collection_name": dest_sub_collection,
+        "source_collection_name": vector_source_collection,
         "index_database_name": database_name,
         "index_collection_name": embeddings_collection,
-        "source_query": source_query,
-        "text_column": "subchunk_text",
+        "source_query": json.dumps(source_query),
+        "text_column": text_column,
     }
-    _, err = forward_post("/vector-index", vector_index_payload)
+    _, err = forward_post("/create-embeddings", create_embeddings_payload)
     if err:
         msg, status = err
         return msg, status
@@ -240,6 +246,32 @@ def get_privacy_policy_search_config() -> Any:
             "module": "search_policy",
             "append_prompt": "Privacy Policy full text",
             "prepend_prompt": ""
+        })
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        return jsonify(config)
+    except (json.JSONDecodeError, IOError) as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/config/policy-parse", methods=["GET"])
+def get_policy_parse_config() -> Any:
+    """Serve policy subsection parse prompt (same logic as create-policy-subsections)."""
+    config_path = os.path.join(APP_PROMPTS_FOLDER, "policy_subsection_parse.json")
+    if not os.path.isfile(config_path):
+        return jsonify({
+            "module": "policy_subsection_parse",
+            "parse_prompt": "Segment this privacy policy into sections by these disclosure categories: right to know, right to delete, sale of data, sensitive data, data portability, non-discrimination. For each section, provide: (1) chunk_header_text: a short descriptive title, (2) chunk_text: the section content, (3) category: the matching disclosure category from the list above (use 'other' if none fit). Output as structured chunks with these fields.",
+            "categories": [
+                "right to know",
+                "right to delete",
+                "sale of data",
+                "sensitive data",
+                "data portability",
+                "non-discrimination",
+                "other",
+            ],
         })
     try:
         with open(config_path, "r", encoding="utf-8") as f:
@@ -485,6 +517,36 @@ def parse_llm() -> Any:
     return jsonify(data)
 
 
+@app.route("/api/parse-policy-subsections", methods=["POST"])
+def parse_policy_subsections() -> Any:
+    """Proxy to upstream /parse-policy-subsections. Same logic as create-policy-subsections but returns subsections in response."""
+    payload = request.get_json(silent=True) or {}
+    database_name = str(payload.get("database_name", "")).strip() or POLICY_DATABASE
+    collection_name = str(payload.get("collection_name", "")).strip()
+    document_id = str(payload.get("document_id", "")).strip()
+    column = str(payload.get("column", "text")).strip() or "text"
+    parse_prompt = str(payload.get("parse_prompt", "")).strip() or None
+    if not collection_name or not document_id:
+        return jsonify({
+            "error": "collection_name and document_id are required."
+        }), 400
+
+    body: dict[str, Any] = {
+        "database": database_name,
+        "collection": collection_name,
+        "column": column,
+        "source_query": {"document_id": document_id},
+    }
+    if parse_prompt:
+        body["parse_prompt"] = parse_prompt
+
+    data, error = forward_post("/parse-policy-subsections", body)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
 @app.route("/api/save-parsed", methods=["POST"])
 def save_parsed_document() -> Any:
     """Persist parsed chunks to the chunk collections."""
@@ -633,7 +695,7 @@ def save_parsed_document() -> Any:
 
 @app.route("/api/vector-index", methods=["POST"])
 def vector_index() -> Any:
-    """Proxy vector index requests to the upstream API."""
+    """Proxy vector index requests to upstream /create-embeddings."""
     payload = request.get_json(silent=True) or {}
     source_database_name = str(payload.get("source_database_name", "")).strip()
     source_collection_name = str(payload.get("source_collection_name", "")).strip()
@@ -668,7 +730,7 @@ def vector_index() -> Any:
     if payload.get("text_column"):
         proxy_payload["text_column"] = str(payload["text_column"])
 
-    data, error = forward_post("/vector-index", proxy_payload)
+    data, error = forward_post("/create-embeddings", proxy_payload)
     if error:
         message, status = error
         return jsonify({"error": message}), status
@@ -1056,8 +1118,69 @@ def compliance_alerts() -> Any:
     return jsonify(data)
 
 
+def _infer_job_type(doc: dict[str, Any], default: str) -> str:
+    """Extract job_type from doc, inferring from structure when missing."""
+    job_type = doc.get("job_type")
+    if job_type:
+        return job_type
+    run_types = doc.get("run_types")
+    if run_types and len(run_types) > 0:
+        return run_types[0]
+    # Infer from structure: health_score has privacy_health_score + score_breakdown/components
+    if doc.get("privacy_health_score") is not None and (
+        "score_breakdown" in doc or "components" in doc
+    ):
+        return "health_score"
+    return default
+
+
 def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
-    """Transform run detail (drift_check or flat gap format) into user-friendly compliance view."""
+    """Transform run detail (job-shaped, health_score, drift_check, or flat gap format) into user-friendly compliance view."""
+    # Job-shaped: has result (compliance_jobs) - either result.gaps or result.privacy_health_score
+    res = doc.get("result")
+    if isinstance(res, dict):
+        has_gaps = isinstance(res.get("gaps"), list)
+        has_health_score = res.get("privacy_health_score") is not None
+        if has_gaps or has_health_score:
+            req = doc.get("request") or {}
+            pid = req.get("policy_document_id") or res.get("policy_document_id")
+            job_type = _infer_job_type(doc, "health_score" if has_health_score and not has_gaps else "gap_analysis")
+            return {
+                "result": res,
+                "request": req,
+                "policy_document_id": pid,
+                "run_id": _mongo_id_str(doc.get("_id")) or _mongo_id_str(doc.get("job_id")),
+                "run_at": doc.get("completed_at") or doc.get("created_at") or res.get("analyzed_at"),
+                "status": doc.get("status", "completed"),
+                "job_type": job_type,
+                "created_at": doc.get("created_at"),
+                "completed_at": doc.get("completed_at"),
+                "privacy_health_score": res.get("privacy_health_score"),
+            }
+    # Health score / score assessment format: flat doc with privacy_health_score, no gaps
+    if doc.get("privacy_health_score") is not None and not isinstance(doc.get("gaps"), list):
+        job_type = _infer_job_type(doc, "health_score")
+        result = dict(doc)
+        result.pop("_id", None)
+        result.setdefault("policy_document_id", doc.get("policy_document_id"))
+        result.setdefault("company_name", doc.get("company_name"))
+        result.setdefault("privacy_health_score", doc.get("privacy_health_score"))
+        result.setdefault("score_breakdown", doc.get("score_breakdown", {}))
+        result.setdefault("components", doc.get("components", {}))
+        result.setdefault("analyzed_at", doc.get("analyzed_at", doc.get("run_at")))
+        return {
+            "result": result,
+            "request": {"policy_document_id": doc.get("policy_document_id")},
+            "policy_document_id": doc.get("policy_document_id"),
+            "run_id": _mongo_id_str(doc.get("_id")),
+            "run_at": doc.get("analyzed_at") or doc.get("run_at"),
+            "status": "completed",
+            "job_type": job_type,
+            "created_at": doc.get("created_at"),
+            "completed_at": doc.get("completed_at"),
+            "privacy_health_score": doc.get("privacy_health_score"),
+        }
+    # Flat gap format (compliance_results)
     if isinstance(doc.get("gaps"), list) and (
         doc.get("policy_document_id") or doc.get("company_name")
     ):
@@ -1065,6 +1188,7 @@ def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
         gaps = doc.get("gaps", [])
         summary = _normalize_gap_summary(gaps, doc.get("summary"))
         result = {**doc, "summary": summary}
+        job_type = _infer_job_type(doc, "gap_analysis")
         return {
             "result": result,
             "request": {"policy_document_id": pid},
@@ -1072,7 +1196,7 @@ def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
             "run_id": _mongo_id_str(doc.get("_id")),
             "run_at": doc.get("analyzed_at", doc.get("run_at")),
             "status": "completed",
-            "job_type": "gap_analysis",
+            "job_type": job_type,
         }
     alerts = doc.get("alerts", [])
     gaps: list[dict[str, Any]] = []
@@ -1123,6 +1247,7 @@ def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
         "analyzed_at": doc.get("analyzed_at", ""),
         "applicable_jurisdictions": sorted(jurisdictions),
     }
+    job_type = _infer_job_type(doc, "regulatory_drift")
     return {
         "result": result,
         "request": {"policy_document_id": policy_document_id or None},
@@ -1130,7 +1255,7 @@ def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
         "run_id": _mongo_id_str(doc.get("_id")),
         "run_at": doc.get("analyzed_at", ""),
         "status": "completed",
-        "job_type": "regulatory_drift",
+        "job_type": job_type,
         "created_at": doc.get("analyzed_at", ""),
         "completed_at": doc.get("analyzed_at", ""),
         "privacy_health_score": health_score,
@@ -1195,9 +1320,51 @@ def _runs_from_compliance_run_log(
     until: str = "",
     types: str = "",
 ) -> dict[str, Any]:
-    """Fetch runs from compliance_run_log and compliance_results, merge and return RunsListResponse shape."""
+    """Fetch runs from compliance_jobs, compliance_run_log, and compliance_results."""
     all_runs: list[dict[str, Any]] = []
 
+    # compliance_jobs: use job_type from doc
+    jobs_docs = _fetch_documents(COMPLIANCE_JOBS_COLLECTION)
+    for doc in jobs_docs:
+        run_id = _mongo_id_str(doc.get("_id")) or _mongo_id_str(doc.get("job_id"))
+        if not run_id:
+            continue
+        run_at = _run_timestamp(doc)
+        req = doc.get("request") or {}
+        res = doc.get("result") or {}
+        pid = req.get("policy_document_id") or res.get("policy_document_id") or doc.get("policy_document_id") or ""
+        company_name = res.get("company_name") or doc.get("company_name")
+        summary = res.get("summary") or doc.get("summary") or {}
+        components = res.get("components") or doc.get("components") or {}
+        total = summary.get("total_requirements") or components.get("requirements_total", 0)
+        job_type = doc.get("job_type")
+        if not job_type:
+            continue
+        all_runs.append({
+            "run_id": run_id,
+            "job_id": run_id,
+            "policy_document_id": str(pid) if pid else "",
+            "company_name": company_name,
+            "run_at": run_at,
+            "created_at": doc.get("created_at") or run_at,
+            "completed_at": doc.get("completed_at") or run_at,
+            "privacy_health_score": res.get("privacy_health_score") or doc.get("privacy_health_score"),
+            "status": doc.get("status") or "completed",
+            "job_type": job_type,
+            "summary": {
+                "addressed": summary.get("addressed", 0),
+                "partial": summary.get("partial", 0),
+                "ambiguous": summary.get("ambiguous", 0),
+                "missing": summary.get("missing", 0),
+                "conflicts": summary.get("conflicts", 0),
+                "total_requirements": total,
+            },
+            "types": [job_type],
+            "_source": "compliance_jobs",
+            "_doc": doc,
+        })
+
+    # compliance_run_log: read job_type/run_types from doc if present
     run_log_docs = _fetch_documents(COMPLIANCE_RUN_LOG_COLLECTION)
     for doc in run_log_docs:
         run_id = _mongo_id_str(doc.get("_id"))
@@ -1210,6 +1377,9 @@ def _runs_from_compliance_run_log(
             first = next((a for a in alerts if a.get("policy_document_id")), alerts[0])
             pid = pid or first.get("policy_document_id", "")
             company_name = company_name or first.get("company_name")
+        doc_types = doc.get("run_types") or doc.get("types") or []
+        job_type = doc.get("job_type") or (doc_types[0] if doc_types else "regulatory_drift")
+        type_list = list(doc_types) if doc_types else [job_type]
         all_runs.append({
             "run_id": run_id,
             "job_id": run_id,
@@ -1220,6 +1390,7 @@ def _runs_from_compliance_run_log(
             "completed_at": analyzed_at,
             "privacy_health_score": first.get("current_score") if first else None,
             "status": "completed",
+            "job_type": job_type,
             "summary": {
                 "addressed": sum(len(a.get("resolved_gaps", [])) for a in alerts),
                 "missing": sum(len(a.get("new_gaps", [])) for a in alerts),
@@ -1229,16 +1400,22 @@ def _runs_from_compliance_run_log(
                     for a in alerts
                 ),
             },
-            "types": ["regulatory_drift"],
+            "types": type_list,
             "_source": "compliance_run_log",
             "_doc": doc,
         })
 
+    # compliance_results: use run_types from doc (fallback to types)
     results_docs = _fetch_documents(COMPLIANCE_RESULTS_COLLECTION)
     for doc in results_docs:
         run_id = _mongo_id_str(doc.get("_id"))
         run_at = _run_timestamp(doc)
         summary = doc.get("summary", {})
+        components = doc.get("components", {})
+        total = summary.get("total_requirements") or components.get("requirements_total", 0)
+        doc_types = doc.get("run_types") or doc.get("types") or []
+        job_type = doc.get("job_type") or (doc_types[0] if doc_types else "gap_analysis")
+        type_list = list(doc_types) if doc_types else [job_type]
         all_runs.append({
             "run_id": run_id,
             "job_id": run_id,
@@ -1249,15 +1426,16 @@ def _runs_from_compliance_run_log(
             "completed_at": run_at,
             "privacy_health_score": doc.get("privacy_health_score"),
             "status": "completed",
+            "job_type": job_type,
             "summary": {
                 "addressed": summary.get("addressed", 0),
                 "partial": summary.get("partial", 0),
                 "ambiguous": summary.get("ambiguous", 0),
                 "missing": summary.get("missing", 0),
                 "conflicts": summary.get("conflicts", 0),
-                "total_requirements": summary.get("total_requirements", 0),
+                "total_requirements": total,
             },
-            "types": ["gap_analysis"],
+            "types": type_list,
             "_source": "compliance_results",
             "_doc": doc,
         })
@@ -1272,7 +1450,13 @@ def _runs_from_compliance_run_log(
         runs = [r for r in runs if (r.get("run_at") or "") <= until]
     if types:
         want = {t.strip() for t in types.split(",") if t.strip()}
-        runs = [r for r in runs if want & set(r.get("types") or [])]
+        def _run_matches_types(r: dict[str, Any]) -> bool:
+            run_types = set(r.get("types") or [])
+            job_type = r.get("job_type")
+            if job_type:
+                run_types.add(job_type)
+            return bool(want & run_types)
+        runs = [r for r in runs if _run_matches_types(r)]
 
     runs.sort(key=lambda r: r.get("run_at") or "", reverse=True)
     total = len(runs)
@@ -1311,7 +1495,7 @@ def compliance_run_detail(run_id: str) -> Any:
             return jsonify({"error": message}), status
         return jsonify(data if data else {"message": "deleted"}), 200
 
-    for collection in (COMPLIANCE_RUN_LOG_COLLECTION, COMPLIANCE_RESULTS_COLLECTION):
+    for collection in (COMPLIANCE_JOBS_COLLECTION, COMPLIANCE_RUN_LOG_COLLECTION, COMPLIANCE_RESULTS_COLLECTION):
         for query in ({"_id": run_id}, {"_id": {"$oid": run_id}}, None):
             params: dict[str, Any] = {
                 "database_name": POLICY_DATABASE,
@@ -1422,6 +1606,8 @@ def compliance_gap_analysis() -> Any:
         result = {**result, "summary": _normalize_gap_summary(gaps, result.get("summary"))}
     if save_results:
         doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}
+        doc["job_type"] = "gap_analysis"
+        doc["run_types"] = doc.get("run_types") or ["gap_analysis"]
         if "error" in result:
             doc["compliance_error"] = result["error"]
         if "message" in result:
@@ -1537,6 +1723,8 @@ def compliance_health_score() -> Any:
     )
     if payload.get("save_results"):
         doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}
+        doc["job_type"] = "health_score"
+        doc["run_types"] = doc.get("run_types") or ["health_score"]
         if "error" in result:
             doc["compliance_error"] = result["error"]
         if "message" in result:

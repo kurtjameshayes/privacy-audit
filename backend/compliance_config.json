@@ -3,7 +3,7 @@
   "use_vector_search": false,
   "index_database_name": "privacy-compliance",
   "index_collection_name": "statute_sub_embeddings",
-  "policy_index_collection_name": "policy_sub_embeddings",
+  "policy_index_collection_name": "policy_legal_embeddings",
   "workflow_state_collection": "document_workflow_state",
   "default_jurisdictions": [
     "CA",

@@ -564,13 +564,45 @@ export default function CompliancePage() {
             )}
             {healthResult && (
               <div className="health-score-display">
-                <p>
-                  Score: {healthScore != null ? healthScore : "—"} / 100
-                </p>
-                {healthResult.score_breakdown && (
-                  <pre>
-                    {JSON.stringify(healthResult.score_breakdown, null, 2)}
-                  </pre>
+                <div className="health-score-value">
+                  <span className="health-score-number">{healthScore != null ? healthScore : "—"}</span>
+                  <span className="health-score-max"> / 100</span>
+                </div>
+                {healthResult.components && typeof healthResult.components === "object" && (
+                  <dl className="health-score-components">
+                    {Object.entries(healthResult.components as Record<string, unknown>).map(([k, v]) => (
+                      <div key={k}>
+                        <dt>{k.replace(/_/g, " ")}</dt>
+                        <dd>{typeof v === "boolean" ? (v ? "Yes" : "No") : String(v)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+                {healthResult.score_breakdown && typeof healthResult.score_breakdown === "object" && (
+                  <div className="health-score-breakdown">
+                    <p className="health-score-breakdown-title">Score breakdown</p>
+                    {Object.entries(healthResult.score_breakdown as Record<string, unknown>).map(([sectionKey, sectionVal]) => {
+                      if (typeof sectionVal !== "object" || sectionVal === null || Array.isArray(sectionVal)) return null;
+                      const entries = Object.entries(sectionVal as Record<string, unknown>);
+                      if (entries.length === 0) return null;
+                      const sectionLabel = sectionKey === "by_jurisdiction" ? "By jurisdiction" : sectionKey === "by_category" ? "By category" : sectionKey.replace(/_/g, " ");
+                      return (
+                        <div key={sectionKey} className="health-score-breakdown-section">
+                          <p className="health-score-breakdown-section-label">{sectionLabel}</p>
+                          <table className="health-score-breakdown-table">
+                            <tbody>
+                              {entries.map(([k, v]) => (
+                                <tr key={k}>
+                                  <td>{k.replace(/_/g, " ")}</td>
+                                  <td>{String(v)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             )}
@@ -585,7 +617,54 @@ export default function CompliancePage() {
                 <span className="error-text">{multiError}</span>
               </div>
             )}
-            {multiResult && <pre>{JSON.stringify(multiResult, null, 2)}</pre>}
+            {multiResult && (
+              <div className="multi-jurisdictional-display">
+                {multiResult.applicable_jurisdictions && Array.isArray(multiResult.applicable_jurisdictions) && (
+                  <p className="multi-jurisdictional-jurisdictions">
+                    <strong>Jurisdictions:</strong> {(multiResult.applicable_jurisdictions as string[]).join(", ")}
+                  </p>
+                )}
+                {multiResult.strictest_common_denominator && Array.isArray(multiResult.strictest_common_denominator) && (
+                  <div className="multi-jurisdictional-requirements">
+                    <p className="multi-jurisdictional-requirements-title">Strictest common denominator</p>
+                    <table className="multi-jurisdictional-table">
+                      <thead>
+                        <tr>
+                          <th>Requirement</th>
+                          <th>Jurisdiction</th>
+                          <th>Policy alignment</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(multiResult.strictest_common_denominator as Record<string, unknown>[]).map((r, i) => (
+                          <tr key={i}>
+                            <td>{String(r.label ?? r.canonical_requirement_id ?? "—")}</td>
+                            <td>{String(r.strictest_jurisdiction ?? "—")}</td>
+                            <td>{String(r.policy_alignment ?? "—")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {multiResult.conflicts_between_jurisdictions && Array.isArray(multiResult.conflicts_between_jurisdictions) && (multiResult.conflicts_between_jurisdictions as unknown[]).length > 0 && (
+                  <div className="multi-jurisdictional-conflicts">
+                    <p className="multi-jurisdictional-conflicts-title">Conflicts between jurisdictions</p>
+                    <ul>
+                      {(multiResult.conflicts_between_jurisdictions as Record<string, unknown>[]).map((c, i) => (
+                        <li key={i}>
+                          {typeof c === "object" && c !== null
+                            ? Object.entries(c)
+                                .map(([k, v]) => `${k.replace(/_/g, " ")}: ${String(v)}`)
+                                .join(" — ")
+                            : String(c)}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

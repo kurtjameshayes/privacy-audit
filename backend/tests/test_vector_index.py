@@ -15,10 +15,10 @@ def test_vector_index_requires_fields() -> None:
 
 
 def test_vector_index_serializes_query(monkeypatch: Any) -> None:
-    calls: list[dict[str, Any]] = []
+    post_calls: list[tuple[str, dict[str, Any]]] = []
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        calls.append(payload)
+        post_calls.append((endpoint, payload))
         return {"ok": True}, None
 
     monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
@@ -36,17 +36,18 @@ def test_vector_index_serializes_query(monkeypatch: Any) -> None:
     )
 
     assert response.status_code == 200
-    assert calls
-    forwarded = calls[0]
+    assert post_calls
+    endpoint, forwarded = post_calls[0]
+    assert endpoint == "/create-embeddings"
     assert forwarded["source_collection_name"] == "policy_chunks"
     assert json.loads(forwarded["source_query"]) == {"document_id": "doc-123"}
 
 
 def test_vector_index_passes_text_column(monkeypatch: Any) -> None:
-    calls: list[dict[str, Any]] = []
+    post_calls: list[tuple[str, dict[str, Any]]] = []
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        calls.append(payload)
+        post_calls.append((endpoint, payload))
         return {"ok": True}, None
 
     monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
@@ -65,6 +66,6 @@ def test_vector_index_passes_text_column(monkeypatch: Any) -> None:
     )
 
     assert response.status_code == 200
-    assert calls
-    forwarded = calls[0]
+    assert post_calls
+    _, forwarded = post_calls[0]
     assert forwarded["text_column"] == "subchunk_text"

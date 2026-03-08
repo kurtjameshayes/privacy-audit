@@ -497,7 +497,7 @@ def run_gap_analysis(
     save_results: bool = True,
     num_rows: int | None = None,
 ) -> dict[str, Any]:
-    """Proxy to upstream /api/v3/compliance/gap-analysis. Returns spec JSON with gaps and summary."""
+    """Proxy to upstream /api/v4/compliance/gap-analysis. Returns spec JSON with gaps and summary."""
     config = config or load_config()
     jurisdictions = applicable_jurisdictions or config.get("default_jurisdictions", ["CA", "VA"])
 
@@ -510,7 +510,7 @@ def run_gap_analysis(
     }
     if num_rows is not None:
         body["num_rows"] = num_rows
-    data, error = forward_post("/api/v3/compliance/gap-analysis", body)
+    data, error = forward_post("/api/v4/compliance/gap-analysis", body)
     if error:
         msg, status = error
         return {

@@ -1055,6 +1055,8 @@ input[type="text"]:focus {
 .parse-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   margin-top: 8px;
 }
 
@@ -1117,6 +1119,22 @@ input[type="text"]:focus {
   overflow-wrap: break-word;
   word-break: break-word;
   min-width: 0;
+}
+
+.parse-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+.parse-checkbox-label input {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
 }
 
 .parse-include {
@@ -1544,6 +1562,49 @@ input[type="text"]:focus {
   color: #b91c1c;
 }
 
+/* Job type badges (Run Detail) */
+.job-type-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--bg-card-muted);
+  color: var(--text-secondary);
+}
+
+.job-type-badge.job-type-gap-analysis {
+  background: rgba(37, 99, 235, 0.15);
+  color: var(--primary);
+}
+
+.job-type-badge.job-type-health-score {
+  background: rgba(13, 125, 74, 0.15);
+  color: #0d7d4a;
+}
+
+.job-type-badge.job-type-gap-v3,
+.job-type-badge.job-type-gap-v4 {
+  background: rgba(124, 58, 237, 0.15);
+  color: #7c3aed;
+}
+
+.job-type-badge.job-type-regulatory-drift {
+  background: rgba(217, 119, 6, 0.15);
+  color: #b45309;
+}
+
+.job-type-badge.job-type-applicability {
+  background: rgba(6, 182, 212, 0.15);
+  color: #0891b2;
+}
+
+.job-type-badge.job-type-multi-jurisdictional {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+}
+
 /* Gap analysis result */
 .gap-analysis-result {
   display: flex;
@@ -1652,6 +1713,20 @@ input[type="text"]:focus {
   font-size: 14px;
   color: var(--text-primary);
   line-height: 1.5;
+}
+
+.compliance-bullet-list {
+  margin: 0;
+  padding-left: 1.25em;
+  list-style-type: disc;
+}
+
+.compliance-bullet-list li {
+  margin-bottom: 0.35em;
+}
+
+.compliance-bullet-list li:last-child {
+  margin-bottom: 0;
 }
 
 .gap-statute-meta {
@@ -1944,8 +2019,130 @@ input[type="text"]:focus {
   font-size: 14px;
 }
 
-.health-score-display pre {
-  margin-top: 8px;
+.health-score-value {
+  margin-bottom: 12px;
+}
+
+.health-score-number {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.health-score-max {
+  font-size: 16px;
+  color: var(--text-muted);
+}
+
+.health-score-components {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 20px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.health-score-components dt {
+  color: var(--text-muted);
+}
+
+.health-score-components dd {
+  margin: 0;
+}
+
+.health-score-breakdown {
+  margin-top: 16px;
+}
+
+.health-score-breakdown-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.health-score-breakdown-section {
+  margin-top: 12px;
+}
+
+.health-score-breakdown-section-label {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.health-score-breakdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.health-score-breakdown-table td {
+  padding: 4px 12px 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.health-score-breakdown-table td:first-child {
+  color: var(--text-muted);
+}
+
+.health-score-breakdown-table td:last-child {
+  text-align: right;
+  font-weight: 500;
+}
+
+.multi-jurisdictional-display {
+  font-size: 14px;
+}
+
+.multi-jurisdictional-jurisdictions {
+  margin: 0 0 12px;
+}
+
+.multi-jurisdictional-requirements {
+  margin-top: 12px;
+}
+
+.multi-jurisdictional-requirements-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.multi-jurisdictional-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.multi-jurisdictional-table th,
+.multi-jurisdictional-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.multi-jurisdictional-table th {
+  font-weight: 600;
+  background: var(--bg-card-muted);
+}
+
+.multi-jurisdictional-conflicts {
+  margin-top: 12px;
+}
+
+.multi-jurisdictional-conflicts-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.multi-jurisdictional-conflicts ul {
+  margin: 0;
+  padding-left: 20px;
 }
 
 .alerts-panel {
@@ -2322,6 +2519,151 @@ input[type="text"]:focus {
   color: #b91c1c !important;
 }
 
+/* Score assessment (health_score job type) */
+.runs-score-assessment {
+  padding: 20px;
+  background: var(--bg-panel);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.runs-score-assessment-title {
+  margin: 0 0 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.runs-score-assessment-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.runs-score-assessment-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.runs-score-assessment-text p {
+  margin: 0 0 0.75em;
+}
+
+.runs-score-assessment-text p:last-child {
+  margin-bottom: 0;
+}
+
+.runs-score-assessment-text ul,
+.runs-score-assessment-text ol {
+  margin: 0 0 0.75em;
+  padding-left: 1.5em;
+}
+
+.runs-score-assessment-text h1,
+.runs-score-assessment-text h2,
+.runs-score-assessment-text h3 {
+  margin: 1em 0 0.5em;
+  font-weight: 600;
+}
+
+.runs-score-assessment-text h1 { font-size: 1.1em; }
+.runs-score-assessment-text h2 { font-size: 1.05em; }
+.runs-score-assessment-text h3 { font-size: 1em; }
+
+.runs-score-assessment-text strong {
+  font-weight: 600;
+}
+
+.runs-score-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.runs-score-number {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--primary);
+  line-height: 1;
+}
+
+.runs-score-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.runs-score-unavailable,
+.runs-score-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.runs-score-error {
+  color: #b91c1c;
+}
+
+.runs-score-components {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 20px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.runs-score-components dt {
+  color: var(--text-muted);
+}
+
+.runs-score-components dd {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.runs-score-breakdown {
+  font-size: 13px;
+}
+
+.runs-score-breakdown-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.runs-score-breakdown-section {
+  margin-top: 12px;
+}
+
+.runs-score-breakdown-section-label {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.runs-score-breakdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.runs-score-breakdown-table td {
+  padding: 4px 12px 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.runs-score-breakdown-table td:first-child {
+  color: var(--text-muted);
+}
+
+.runs-score-breakdown-table td:last-child {
+  text-align: right;
+  font-weight: 500;
+}
+
 .run-status-running,
 .run-status-failed,
 .run-status-no-results {
@@ -2478,10 +2820,70 @@ input[type="text"]:focus {
   overflow-y: auto;
 }
 
-.reports-preview-content pre {
+.reports-preview-markdown {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.reports-preview-markdown h1,
+.reports-preview-markdown h2,
+.reports-preview-markdown h3 {
+  margin: 1em 0 0.5em;
+  font-weight: 600;
+}
+
+.reports-preview-markdown h1 { font-size: 1.25em; }
+.reports-preview-markdown h2 { font-size: 1.1em; }
+.reports-preview-markdown h3 { font-size: 1em; }
+
+.reports-preview-markdown p {
+  margin: 0 0 0.75em;
+}
+
+.reports-preview-markdown ul,
+.reports-preview-markdown ol {
+  margin: 0 0 0.75em;
+  padding-left: 1.5em;
+}
+
+.reports-preview-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75em 0;
   font-size: 13px;
-  line-height: 1.5;
+}
+
+.reports-preview-markdown th,
+.reports-preview-markdown td {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.reports-preview-markdown th {
+  background: var(--bg-card-muted);
+  font-weight: 600;
+}
+
+.reports-preview-markdown code {
+  font-size: 0.9em;
+  background: var(--bg-card-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.reports-preview-markdown pre {
+  background: var(--bg-card-muted);
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
-  margin: 0;
+  margin: 0.75em 0;
+}
+
+.reports-preview-markdown pre code {
+  background: none;
+  padding: 0;
 }

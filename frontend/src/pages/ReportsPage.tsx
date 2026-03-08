@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
 import { normalizeApiError } from "../api/client";
 import { useDocuments, extractDocumentId } from "../hooks/useDocuments";
 import type { DocumentRecord } from "../types/api";
@@ -247,8 +248,8 @@ export default function ReportsPage() {
                 Download .md
               </button>
             </div>
-            <div className="reports-preview-content">
-              <pre>{content}</pre>
+            <div className="reports-preview-content reports-preview-markdown">
+              <ReactMarkdown>{content}</ReactMarkdown>
             </div>
           </div>
         )}

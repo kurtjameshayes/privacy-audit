@@ -1,0 +1,13 @@
+{
+  "module": "policy_subsection_parse",
+  "parse_prompt": "Segment this privacy policy into sections by these disclosure categories: right to know, right to delete, sale of data, sensitive data, data portability, non-discrimination. For each section, provide: (1) chunk_header_text: a short descriptive title, (2) chunk_text: the section content, (3) category: the matching disclosure category from the list above (use 'other' if none fit). Output as structured chunks with these fields.",
+  "categories": [
+    "right to know",
+    "right to delete",
+    "sale of data",
+    "sensitive data",
+    "data portability",
+    "non-discrimination",
+    "other"
+  ]
+}

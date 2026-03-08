@@ -7,6 +7,40 @@ function truncateRequirement(text: string, maxLen: number): string {
   return text.slice(0, maxLen).trimEnd() + "…";
 }
 
+/** Split text into bullet items and remove trailing punctuation for readability. */
+function formatAsBullets(text: string): string[] {
+  if (!text || typeof text !== "string") return [];
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+
+  const segments = trimmed
+    .split(/\n+/)
+    .flatMap((line) => line.split(/\s*;\s*/))
+    .map((s) =>
+      s
+        .replace(/^[\s\-•*]+\s*/, "")
+        .replace(/[\s.,;:]+$/, "")
+        .trim()
+    )
+    .filter((s) => s.length > 0);
+
+  return segments.length > 0 ? segments : [trimmed.replace(/[\s.,;:]+$/, "").trim()];
+}
+
+function FormattedComplianceText({ text }: { text: string }) {
+  const bullets = formatAsBullets(text);
+  if (bullets.length <= 1) {
+    return <>{bullets[0] || "—"}</>;
+  }
+  return (
+    <ul className="compliance-bullet-list">
+      {bullets.map((item, i) => (
+        <li key={i}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
 export function GapItemCard({
   gap,
   expanded,
@@ -75,6 +109,17 @@ export function GapItemCard({
               </blockquote>
             </div>
           )}
+          {(gap.statute_name || gap.section || gap.statute_reference) && (
+            <div className="gap-item-detail-block">
+              <p className="compliance-detail-label">Statute</p>
+              <p className="gap-statute-meta">
+                {[gap.section, gap.statute_reference, gap.statute_name]
+                  .filter(Boolean)
+                  .filter((v, i, arr) => arr.indexOf(v) === i)
+                  .join(" · ")}
+              </p>
+            </div>
+          )}
           {gap.statute_quote && (
             <div className="gap-item-detail-block">
               <p className="compliance-detail-label">Statute requirement</p>
@@ -86,17 +131,9 @@ export function GapItemCard({
           {gap.conflict_description && (
             <div className="gap-item-detail-block gap-conflict-block">
               <p className="compliance-detail-label">Conflict</p>
-              <p className="gap-conflict-text">{gap.conflict_description}</p>
-            </div>
-          )}
-          {(gap.statute_name || gap.section || gap.statute_reference) && (
-            <div className="gap-item-detail-block">
-              <p className="compliance-detail-label">Statute</p>
-              <p className="gap-statute-meta">
-                {[gap.statute_name, gap.section, gap.statute_reference]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
+              <div className="gap-conflict-text">
+                <FormattedComplianceText text={gap.conflict_description} />
+              </div>
             </div>
           )}
           {onToggle && (gap.policy_subchunk_text || gap.statute_subchunk_text) && (
@@ -114,13 +151,17 @@ export function GapItemCard({
               {gap.statute_subchunk_text && (
                 <div className="gap-item-detail-block">
                   <p className="compliance-detail-label">Statute context</p>
-                  <div className="gap-context-block">{gap.statute_subchunk_text}</div>
+                  <div className="gap-context-block">
+                    <FormattedComplianceText text={gap.statute_subchunk_text} />
+                  </div>
                 </div>
               )}
               {gap.policy_subchunk_text && (
                 <div className="gap-item-detail-block">
                   <p className="compliance-detail-label">Policy context</p>
-                  <div className="gap-context-block">{gap.policy_subchunk_text}</div>
+                  <div className="gap-context-block">
+                    <FormattedComplianceText text={gap.policy_subchunk_text} />
+                  </div>
                 </div>
               )}
             </div>

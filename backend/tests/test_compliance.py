@@ -172,7 +172,7 @@ def test_compliance_gap_analysis_returns_spec_shape(monkeypatch: Any) -> None:
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/api/v3/compliance/gap-analysis":
+        if endpoint == "/api/v4/compliance/gap-analysis":
             return {
                 "policy_document_id": "doc-1",
                 "company_name": "Acme",
@@ -219,7 +219,7 @@ def test_compliance_gap_analysis_produces_gaps_when_upstream_succeeds(monkeypatc
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/api/v3/compliance/gap-analysis":
+        if endpoint == "/api/v4/compliance/gap-analysis":
             gap_analysis_calls.append(payload)
             return {
                 "policy_document_id": "doc-gap",
@@ -329,7 +329,7 @@ def test_compliance_health_score_returns_spec_shape(monkeypatch: Any) -> None:
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/api/v3/compliance/gap-analysis":
+        if endpoint == "/api/v4/compliance/gap-analysis":
             return {
                 "policy_document_id": "doc-1",
                 "company_name": "Acme",
@@ -387,7 +387,7 @@ def test_compliance_health_score_accepts_weights(monkeypatch: Any) -> None:
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/api/v3/compliance/gap-analysis":
+        if endpoint == "/api/v4/compliance/gap-analysis":
             return {
                 "policy_document_id": "doc-1",
                 "company_name": "Acme",
@@ -433,7 +433,7 @@ def test_compliance_drift_check_returns_spec_shape(monkeypatch: Any) -> None:
         return {"documents": []}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        if endpoint == "/api/v3/compliance/gap-analysis":
+        if endpoint == "/api/v4/compliance/gap-analysis":
             return {
                 "policy_document_id": payload.get("policy_document_id", ""),
                 "company_name": "",

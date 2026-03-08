@@ -7,6 +7,7 @@ interface ParsedDocItem {
   document_id?: string;
   parsed_header_text: string;
   parsed_text: string;
+  category?: string;
   [key: string]: unknown;
 }
 
@@ -40,14 +41,37 @@ function extractResponseArray(data: unknown): unknown[] {
 }
 
 function parseParsedDocResponse(data: unknown): ParsedDocItem[] {
-  if (Array.isArray(data)) return data as ParsedDocItem[];
-  if (data && typeof data === "object") {
+  let items: ParsedDocItem[] = [];
+  if (Array.isArray(data)) {
+    items = data as ParsedDocItem[];
+  } else if (data && typeof data === "object") {
     const record = data as Record<string, unknown>;
     if (Array.isArray(record.parsed_doc)) {
-      return record.parsed_doc as ParsedDocItem[];
+      items = record.parsed_doc as ParsedDocItem[];
     }
   }
-  return [];
+  return items.map((it) => ({
+    ...it,
+    parsed_header_text: toDisplayString(it.parsed_header_text ?? (it as Record<string, unknown>).chunk_header_text),
+    parsed_text: toDisplayString(it.parsed_text ?? (it as Record<string, unknown>).chunk_text),
+    category: toDisplayString(it.category ?? (it as Record<string, unknown>).category),
+  }));
+}
+
+function parsePolicySubsectionsResponse(
+  data: unknown,
+  documentId?: string
+): ParsedDocItem[] {
+  if (!data || typeof data !== "object") return [];
+  const record = data as Record<string, unknown>;
+  const subsections = record.subsections;
+  if (!Array.isArray(subsections)) return [];
+  return subsections.map((s: Record<string, unknown>) => ({
+    parsed_header_text: toDisplayString(s.heading),
+    parsed_text: toDisplayString(s.subsection_text),
+    category: toDisplayString(s.category),
+    document_id: toDisplayString(s.source_id) || documentId || "",
+  }));
 }
 
 function parseChunkDocumentsResponse(data: unknown): ParsedDocItem[] {
@@ -71,6 +95,7 @@ function parseChunkDocumentsResponse(data: unknown): ParsedDocItem[] {
         document_id: toDisplayString(chunk.document_id) || docId,
         parsed_header_text: toDisplayString(chunk.chunk_header_text),
         parsed_text: toDisplayString(chunk.chunk_text),
+        category: toDisplayString(chunk.category),
       })) as ParsedDocItem[];
     }
     if (record.chunk_text || record.chunk_header_text) {
@@ -79,6 +104,7 @@ function parseChunkDocumentsResponse(data: unknown): ParsedDocItem[] {
           document_id: docId,
           parsed_header_text: toDisplayString(record.chunk_header_text),
           parsed_text: toDisplayString(record.chunk_text),
+          category: toDisplayString(record.category),
         },
       ] as ParsedDocItem[];
     }
@@ -109,6 +135,8 @@ export default function ParseModal({
   const listCollection = mode === "policy" ? "policies" : "statutes";
 
   const [parsePrompt, setParsePrompt] = useState("");
+  const [showAdditionalParseInstructions, setShowAdditionalParseInstructions] =
+    useState(false);
   const [parseResults, setParseResults] = useState<ParsedDocItem[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
@@ -166,34 +194,72 @@ export default function ParseModal({
   }, [parseResults]);
 
   const handleRunParse = async () => {
-    if (!doc || !documentId || !parsePrompt.trim()) {
-      setParseError("Please enter a parsing prompt.");
+    if (!doc || !documentId) {
+      setParseError("Document is required.");
       return;
     }
-    setIsParsing(true);
-    setParseError(null);
-    setSaveParsedMessage(null);
-    setSaveParsedSuccess(null);
-    try {
-      const res = await fetch("/api/parse-llm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          database_name: "privacy-compliance",
-          collection_name: listCollection,
-          document_id: documentId,
-          prompt: parsePrompt.trim(),
-        }),
-      });
-      if (!res.ok) throw new Error(await res.text() || "Unable to parse.");
-      const data = await res.json();
-      const parsed = parseParsedDocResponse(data);
-      setParseResults(parsed);
-      if (parsed.length === 0) setParseError("No parsed output returned.");
-    } catch (err) {
-      setParseError(normalizeApiError(err) || "Unable to parse document.");
-    } finally {
-      setIsParsing(false);
+    if (mode === "policy") {
+      const additionalPrompt =
+        showAdditionalParseInstructions && parsePrompt.trim()
+          ? parsePrompt.trim()
+          : undefined;
+      setIsParsing(true);
+      setParseError(null);
+      setSaveParsedMessage(null);
+      setSaveParsedSuccess(null);
+      try {
+        const res = await fetch("/api/parse-policy-subsections", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            database_name: "privacy-compliance",
+            collection_name: "policies",
+            document_id: documentId,
+            column: "text",
+            parse_prompt: additionalPrompt,
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text() || "Unable to parse.");
+        const data = await res.json();
+        const parsed = parsePolicySubsectionsResponse(data, documentId);
+        setParseResults(parsed);
+        if (parsed.length === 0) setParseError("No parsed output returned.");
+      } catch (err) {
+        setParseError(normalizeApiError(err) || "Unable to parse document.");
+      } finally {
+        setIsParsing(false);
+      }
+    } else {
+      const effectivePrompt = parsePrompt.trim();
+      if (!effectivePrompt) {
+        setParseError("Please enter a parsing prompt.");
+        return;
+      }
+      setIsParsing(true);
+      setParseError(null);
+      setSaveParsedMessage(null);
+      setSaveParsedSuccess(null);
+      try {
+        const res = await fetch("/api/parse-llm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            database_name: "privacy-compliance",
+            collection_name: listCollection,
+            document_id: documentId,
+            prompt: effectivePrompt,
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text() || "Unable to parse.");
+        const data = await res.json();
+        const parsed = parseParsedDocResponse(data);
+        setParseResults(parsed);
+        if (parsed.length === 0) setParseError("No parsed output returned.");
+      } catch (err) {
+        setParseError(normalizeApiError(err) || "Unable to parse document.");
+      } finally {
+        setIsParsing(false);
+      }
     }
   };
 
@@ -343,28 +409,50 @@ export default function ParseModal({
 
             <div className="parse-panel">
               <div className="parse-prompt">
-                <label className="field-label" htmlFor="parse-prompt">
-                  Parse prompt
-                </label>
-                <textarea
-                  id="parse-prompt"
-                  value={parsePrompt}
-                  onChange={(e) => setParsePrompt(e.target.value)}
-                  rows={3}
-                  placeholder="Describe how you want the document segmented."
-                />
-                <div className="field-hint">
-                  Adjust the prompt and re-run until the parsed chunks look
-                  right.
-                </div>
+                {mode === "policy" && (
+                  <label className="parse-checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={showAdditionalParseInstructions}
+                      onChange={(e) =>
+                        setShowAdditionalParseInstructions(e.target.checked)
+                      }
+                      disabled={isParsing}
+                    />
+                    Additional Parse Instructions
+                  </label>
+                )}
+                {(mode === "statute" || showAdditionalParseInstructions) && (
+                  <>
+                    <label className="field-label" htmlFor="parse-prompt">
+                      Parse prompt
+                    </label>
+                    <textarea
+                      id="parse-prompt"
+                      value={parsePrompt}
+                      onChange={(e) => setParsePrompt(e.target.value)}
+                      rows={3}
+                      placeholder="Describe how you want the document segmented."
+                    />
+                    <div className="field-hint">
+                      {mode === "policy"
+                        ? "Additional instructions will be appended to the default policy subsection prompt."
+                        : "Adjust the prompt and re-run until the parsed chunks look right."}
+                    </div>
+                  </>
+                )}
                 <div className="parse-actions">
                   <button
                     className="primary-button"
                     type="button"
                     onClick={handleRunParse}
-                    disabled={isParsing || !parsePrompt.trim()}
+                    disabled={
+                      isParsing ||
+                      !documentId ||
+                      (mode === "statute" ? !parsePrompt.trim() : false)
+                    }
                   >
-                    {isParsing ? "Prompting…" : "Prompt"}
+                    {isParsing ? "Parsing…" : "Parse Source Document"}
                   </button>
                 </div>
               </div>
@@ -407,7 +495,9 @@ export default function ParseModal({
                           <p>{item.parsed_header_text || "Untitled section"}</p>
                           <div className="parse-section-meta">
                             <span>
-                              Section {idx + 1} · Doc {item.document_id}
+                              Section {idx + 1}
+                              {item.category ? ` · ${item.category}` : ""}
+                              {item.document_id ? ` · Doc ${item.document_id}` : ""}
                             </span>
                             <label className="parse-include">
                               <input
@@ -445,6 +535,7 @@ export default function ParseModal({
             type="button"
             onClick={() => {
               setParsePrompt("");
+              setShowAdditionalParseInstructions(false);
               setParseResults([]);
               setParseError(null);
               setSaveParsedMessage(null);
