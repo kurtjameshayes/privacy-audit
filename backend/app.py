@@ -1089,6 +1089,29 @@ def compliance_risk_assessment() -> Any:
     return jsonify(data)
 
 
+@app.route("/api/compliance/suggest-policy", methods=["POST"])
+def compliance_suggest_policy() -> Any:
+    """Proxy suggest-policy to upstream. Generates AI-revised policy text to close a compliance gap."""
+    payload = request.get_json(silent=True) or {}
+    policy_text = str(payload.get("policy_text", "")).strip()
+    gap_analysis_text = str(payload.get("gap_analysis_text", "")).strip()
+    gap_analysis_match = str(payload.get("gap_analysis_match", "")).strip()
+    statute_text = str(payload.get("statute_text", "")).strip()
+    if not policy_text or not gap_analysis_text or not gap_analysis_match or not statute_text:
+        return jsonify({"error": "policy_text, gap_analysis_text, gap_analysis_match, and statute_text are required."}), 400
+    body = {
+        "policy_text": policy_text,
+        "gap_analysis_text": gap_analysis_text,
+        "gap_analysis_match": gap_analysis_match,
+        "statute_text": statute_text,
+    }
+    data, error = forward_post("/api/compliance/suggest-policy", body)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
 @app.route("/api/compliance/risk-assessment/templates", methods=["GET"])
 def compliance_risk_assessment_templates() -> Any:
     """Proxy risk assessment templates list to upstream."""

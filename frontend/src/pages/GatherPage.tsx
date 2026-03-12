@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { normalizeApiError } from "../api/client";
+import {
+  Search,
+  Globe,
+  Upload,
+  File as FileIcon,
+  Plus,
+  Copy,
+  Check,
+} from "lucide-react";
+import { InfoIcon } from "../components/Tooltip";
 
 type GatherMode = "policy" | "statute";
 
@@ -46,15 +56,15 @@ const modeContent: Record<
     label: "Policies",
     headline: "Gather corporate privacy policies",
     helper:
-      "Enter the organization name. We will search for \"Organization Privacy Policy\" on published corporate sites.",
-    placeholder: "Lowe's Home Improvement",
+      'Enter the organization name. We will search for "Organization Privacy Policy" on published corporate sites.',
+    placeholder: "e.g. Acme Corp Privacy Policy...",
   },
   statute: {
     label: "Statutes",
     headline: "Gather privacy statutes and regulations",
     helper:
       "Enter a statute name or jurisdiction. We will search for full-text statutes published online.",
-    placeholder: "California Consumer Privacy Act",
+    placeholder: "e.g. California Consumer Privacy Act",
   },
 };
 
@@ -114,7 +124,7 @@ export default function GatherPage() {
 
   useEffect(() => {
     fetch("/api/config/privacy-policy-search")
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => (r.ok ? r.json() : null))
       .then((config) => config && setPolicySearchConfig(config))
       .catch(() => {});
   }, []);
@@ -136,7 +146,10 @@ export default function GatherPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: searchQuery }),
       });
-      if (!response.ok) throw new Error(await response.text() || "Unable to gather results.");
+      if (!response.ok)
+        throw new Error(
+          (await response.text()) || "Unable to gather results."
+        );
       const data = (await response.json()) as GatherResponse;
       setResults(data.results || []);
       setLastQuery(data.query || searchQuery);
@@ -158,10 +171,13 @@ export default function GatherPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: result.url, depth: 1, breadth: 1 }),
       });
-      if (!response.ok) throw new Error(await response.text() || "Unable to crawl.");
+      if (!response.ok)
+        throw new Error((await response.text()) || "Unable to crawl.");
       setCrawlData((await response.json()) as CrawlResponse);
     } catch (caught) {
-      setError(normalizeApiError(caught) || "Unable to crawl the selected URL.");
+      setError(
+        normalizeApiError(caught) || "Unable to crawl the selected URL."
+      );
     } finally {
       setIsCrawling(false);
     }
@@ -191,7 +207,8 @@ export default function GatherPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, depth: 1, breadth: 1 }),
       });
-      if (!response.ok) throw new Error(await response.text() || "Unable to crawl.");
+      if (!response.ok)
+        throw new Error((await response.text()) || "Unable to crawl.");
       setCrawlData((await response.json()) as CrawlResponse);
     } catch (caught) {
       setError(normalizeApiError(caught) || "Unable to crawl the URL.");
@@ -223,7 +240,10 @@ export default function GatherPage() {
         method: "POST",
         body: formData,
       });
-      if (!response.ok) throw new Error(await response.text() || "Unable to process file.");
+      if (!response.ok)
+        throw new Error(
+          (await response.text()) || "Unable to process file."
+        );
       const data = (await response.json()) as { combined_text: string };
       const text = data.combined_text || "";
       setCrawlData({
@@ -235,7 +255,9 @@ export default function GatherPage() {
         depth: 1,
       });
     } catch (caught) {
-      setError(normalizeApiError(caught) || "Unable to process uploaded file.");
+      setError(
+        normalizeApiError(caught) || "Unable to process uploaded file."
+      );
       setSelectedResult(null);
     } finally {
       setIsCrawling(false);
@@ -278,7 +300,8 @@ export default function GatherPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(savePayload),
       });
-      if (!response.ok) throw new Error(await response.text() || "Unable to save.");
+      if (!response.ok)
+        throw new Error((await response.text()) || "Unable to save.");
       const data = (await response.json()) as { message?: string };
       setSaveMessage(data.message || "Saved to policy collection.");
       setShowSaveConfirmation(true);
@@ -303,254 +326,359 @@ export default function GatherPage() {
   };
 
   const isStatuteSave = mode === "statute";
-  const saveFieldValue = isStatuteSave ? jurisdiction.trim() : companyName.trim();
+  const saveFieldValue = isStatuteSave
+    ? jurisdiction.trim()
+    : companyName.trim();
 
   return (
-    <>
-      <header className="main-header">
-        <div>
-          <p className="eyebrow">Gather</p>
-          <h2>Find policies and statutes with purpose-built search</h2>
-          <p className="subtitle">
-            Use prompt-driven discovery to collect full-text privacy documents.
-            Every result can be crawled, reviewed, and appended to your policy
-            collection.
-          </p>
-        </div>
-        <div className="header-card">
-          <p className="header-card-title">Active pipeline</p>
-          <p className="header-card-value">
-            {results.length ? results.length : "—"}
-          </p>
-          <p className="header-card-caption">Results staged for review</p>
-        </div>
-      </header>
-      <div className="context-strip">
-        <span className="context-strip-item">Workflow: Gather → Index → Compare</span>
-        <span className="context-strip-item">Collection: Policy Vault</span>
-        <Link to="/policies" className="context-strip-link">
-          View stored policies
-        </Link>
+    <div className="p-8 max-w-6xl mx-auto w-full">
+      {/* Page Header */}
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+          Gather Documents
+          <InfoIcon content="Acquire privacy policies and statutes either by searching the web, crawling from URLs, or uploading local files. This is the first step in the workflow." />
+        </h1>
+        <p className="text-slate-500 mt-1 text-sm">
+          Find and import documents into your library to begin parsing and
+          compliance analysis.
+        </p>
       </div>
 
-      <section className="gather-panel">
-        <div className="panel-header">
-          <div>
-            <p className="panel-title">Gather sources</p>
-            <p className="panel-subtitle">{modeContent[mode].headline}</p>
-          </div>
-          <div className="mode-toggle">
-            {(["policy", "statute"] as GatherMode[]).map((item) => (
-              <button
-                key={item}
-                className={`mode-button ${mode === item ? "is-active" : ""}`}
-                type="button"
-                onClick={() => {
-                  setMode(item);
-                  setQuery("");
-                  setResults([]);
-                  setError(null);
-                }}
-              >
-                {modeContent[item].label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="panel-body">
-          <div className="search-block">
-            <label className="field-label" htmlFor="query">
-              Search prompt
-            </label>
-            <textarea
-              id="query"
-              value={query}
-              placeholder={modeContent[mode].placeholder}
-              onChange={(e) => setQuery(e.target.value)}
-              rows={4}
-            />
-            <div className="field-hint">{modeContent[mode].helper}</div>
-            <div className="search-row">
-              <div>
-                <p className="search-preview-label">Query preview</p>
-                <p className="search-preview">{searchQuery || "—"}</p>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* ─── Left Column: Acquisition Methods ─── */}
+        <div className="space-y-6">
+          {/* Search Panel */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="p-2 bg-indigo-50 rounded-lg">
+                <Search className="h-5 w-5 text-indigo-600" />
               </div>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={handleSearch}
-                disabled={isSearching}
-              >
-                {isSearching ? "Searching…" : "Gather results"}
-              </button>
+              <h2 className="text-lg font-semibold text-slate-800">
+                Search the Web
+              </h2>
             </div>
-            <div className="direct-url-block">
-              <label className="field-label" htmlFor="direct-url">
-                Or enter URL to crawl directly
-              </label>
-              <div className="direct-url-row">
-                <input
-                  id="direct-url"
-                  type="url"
-                  value={directUrl}
-                  onChange={(e) => setDirectUrl(e.target.value)}
-                  placeholder="https://example.com/privacy-policy"
-                  className="direct-url-input"
-                />
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={handleDirectCrawl}
-                  disabled={isCrawling || !directUrl.trim()}
-                >
-                  {isCrawling ? "Crawling…" : "Crawl URL"}
-                </button>
-              </div>
-            </div>
-            <p className="gather-alt-link">
-              <button
-                type="button"
-                className="link-button"
-                onClick={() => setShowFileUploadModal(true)}
-              >
-                Upload file
-              </button>
-              {" "}(PDF, TXT, HTML)
+            <p className="text-sm text-slate-600 mb-5">
+              Search the web for global corporate policies and published privacy
+              statutes.
             </p>
-            {error ? (
-              <div className="error-banner">
-                <span className="error-text">{error}</span>
-                <button
-                  type="button"
-                  className="error-copy-button"
-                  onClick={async () => {
-                    await copyToClipboard(error);
-                    setErrorCopied(true);
-                    setTimeout(() => setErrorCopied(false), 2000);
-                  }}
-                  title={errorCopied ? "Copied!" : "Copy error"}
-                >
-                  {errorCopied ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </section>
 
-      <section className="results-panel">
-        <div className="panel-header">
-          <p className="panel-title">Results</p>
-          <p className="panel-subtitle">
-            {results.length
-              ? `Showing ${results.length} sources for "${lastQuery || searchQuery}".`
-              : "Awaiting a gather query."}
-          </p>
-        </div>
-        <div className="results-grid">
-          {results.length === 0 ? (
-            <div className="empty-state">
-              <p>No sources yet.</p>
-              <span>Run a gather search to populate policy or statute sources.</span>
-            </div>
-          ) : (
-            results.map((result) => (
-              <article className="result-card" key={result.url}>
-                <div className="result-header">
-                  <div>
-                    <h3>{result.title}</h3>
-                    <p>{result.description}</p>
-                  </div>
-                  <div className="score-stack">
-                    <span className="score-pill">
-                      {formatPercent(result.percent_match)}
-                    </span>
-                    <span className="score-caption">
-                      score {formatScore(result.score)}
-                    </span>
-                  </div>
-                </div>
-                <div className="result-footer">
-                  <span className="result-url">{result.url}</span>
+            <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="query"
+                  className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1"
+                >
+                  Query
+                  <InfoIcon content="Use natural language. e.g., 'Latest GDPR text' or 'Acme Corp Privacy Policy 2024'" />
+                </label>
+                <div className="flex mt-1">
+                  <input
+                    id="query"
+                    type="text"
+                    value={query}
+                    placeholder={modeContent[mode].placeholder}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    className="!flex-1 !rounded-l-md !rounded-r-none !border !border-slate-300 !px-3 !py-2 text-sm focus:!border-indigo-500 focus:!outline-none focus:!ring-1 focus:!ring-indigo-500"
+                  />
                   <button
                     type="button"
-                    className="ghost-button card-action-arrow"
-                    onClick={() => handleView(result)}
+                    onClick={handleSearch}
+                    disabled={isSearching}
+                    className="bg-slate-100 border border-l-0 border-slate-300 rounded-r-md px-4 py-2 text-sm font-medium hover:bg-slate-200 text-slate-700 transition-colors disabled:opacity-50"
                   >
-                    View
+                    {isSearching ? "Searching…" : "Search"}
                   </button>
                 </div>
-              </article>
-            ))
+                {searchQuery && (
+                  <p
+                    className="text-xs text-slate-400 mt-1.5 truncate"
+                    title={searchQuery}
+                  >
+                    Preview: {searchQuery}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-6 pt-2">
+                <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer group">
+                  <input
+                    type="radio"
+                    name="search_type"
+                    checked={mode === "policy"}
+                    onChange={() => {
+                      setMode("policy");
+                      setQuery("");
+                      setResults([]);
+                      setError(null);
+                    }}
+                    className="text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                  />
+                  <span className="group-hover:text-indigo-700 transition-colors">
+                    Corporate Policies
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer group">
+                  <input
+                    type="radio"
+                    name="search_type"
+                    checked={mode === "statute"}
+                    onChange={() => {
+                      setMode("statute");
+                      setQuery("");
+                      setResults([]);
+                      setError(null);
+                    }}
+                    className="text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                  />
+                  <span className="group-hover:text-indigo-700 transition-colors">
+                    Statutes &amp; Regulations
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Direct Ingestion Panel */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="p-2 bg-emerald-50 rounded-lg">
+                <Plus className="h-5 w-5 text-emerald-600" />
+              </div>
+              <h2 className="text-lg font-semibold text-slate-800">
+                Direct Ingestion
+              </h2>
+            </div>
+            <p className="text-sm text-slate-600 mb-5">
+              Crawl a public webpage or manually upload a local document for
+              parsing.
+            </p>
+
+            <div className="space-y-5">
+              {/* URL Crawl */}
+              <div className="border border-slate-100 bg-slate-50/50 rounded-lg p-5">
+                <label
+                  htmlFor="direct-url"
+                  className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1"
+                >
+                  <Globe className="h-4 w-4 text-slate-400" /> Crawl from URL
+                  <InfoIcon content="We will attempt to scrape the main text from the provided URL, ignoring navigation menus and footers." />
+                </label>
+                <div className="flex mt-2">
+                  <input
+                    id="direct-url"
+                    type="url"
+                    value={directUrl}
+                    onChange={(e) => setDirectUrl(e.target.value)}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" &&
+                      directUrl.trim() &&
+                      handleDirectCrawl()
+                    }
+                    placeholder="https://example.com/privacy"
+                    className="!flex-1 !rounded-l-md !rounded-r-none !border !border-slate-300 !px-3 !py-2 text-sm focus:!border-indigo-500 focus:!outline-none focus:!ring-1 focus:!ring-indigo-500 !bg-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleDirectCrawl}
+                    disabled={isCrawling || !directUrl.trim()}
+                    className="bg-indigo-600 text-white border border-indigo-600 rounded-r-md px-4 py-2 text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                  >
+                    {isCrawling && selectedResult?.description === "Direct crawl"
+                      ? "Fetching…"
+                      : "Fetch Content"}
+                  </button>
+                </div>
+              </div>
+
+              {/* File Upload */}
+              <div className="border border-slate-100 bg-slate-50/50 rounded-lg p-5">
+                <span className="text-sm font-medium text-slate-700 mb-2 flex items-center gap-1">
+                  <Upload className="h-4 w-4 text-slate-400" /> Upload Local
+                  File
+                  <InfoIcon content="Supported formats: PDF, TXT, HTML." />
+                </span>
+                <label className="mt-2 flex justify-center rounded-lg border-2 border-dashed border-slate-300 bg-white px-6 py-8 hover:bg-indigo-50/50 hover:border-indigo-300 cursor-pointer transition-all group">
+                  <div className="text-center">
+                    <FileIcon className="mx-auto h-8 w-8 text-slate-300 group-hover:text-indigo-400 transition-colors" />
+                    <div className="mt-3 flex text-sm leading-6 text-slate-600 justify-center">
+                      <span className="font-semibold text-indigo-600 hover:text-indigo-500">
+                        Click to browse
+                      </span>
+                      <span className="pl-1">or drag and drop</span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      PDF, TXT, or HTML up to 10MB
+                    </p>
+                    <input
+                      type="file"
+                      accept=".pdf,.txt,.html,.htm"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleFileUpload(file);
+                        e.target.value = "";
+                      }}
+                      className="hidden"
+                    />
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Error Banner */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-800 p-3 rounded-lg text-sm flex items-start justify-between gap-3">
+              <span className="flex-1">{error}</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  await copyToClipboard(error);
+                  setErrorCopied(true);
+                  setTimeout(() => setErrorCopied(false), 2000);
+                }}
+                title={errorCopied ? "Copied!" : "Copy error"}
+                className="flex-shrink-0 p-1 rounded hover:bg-red-100 transition-colors"
+              >
+                {errorCopied ? (
+                  <Check className="h-4 w-4" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Search Results */}
+          {results.length > 0 && (
+            <div>
+              <h3 className="text-sm font-medium text-slate-700 mb-3">
+                {results.length} results for &ldquo;
+                {lastQuery || searchQuery}&rdquo;
+              </h3>
+              <div className="space-y-3">
+                {results.map((result) => {
+                  const isSelected = selectedResult?.url === result.url;
+                  return (
+                  <div
+                    key={result.url}
+                    className={`p-4 rounded-lg border transition-shadow cursor-pointer ${
+                      isSelected
+                        ? "bg-indigo-50 border-indigo-300 ring-1 ring-indigo-200"
+                        : "bg-white border-slate-200 hover:shadow-sm"
+                    }`}
+                    onClick={() => handleView(result)}
+                  >
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="min-w-0 flex-1">
+                        <h4 className={`font-medium text-sm truncate ${isSelected ? "text-indigo-900" : "text-slate-900"}`}>
+                          {result.title}
+                        </h4>
+                        <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                          {result.description}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1 truncate">
+                          {result.url}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <span className={`text-xs px-2 py-1 rounded font-medium ${
+                          isSelected ? "bg-indigo-100 text-indigo-700" : "bg-indigo-50 text-indigo-600"
+                        }`}>
+                          {formatPercent(result.percent_match)}
+                        </span>
+                        <span
+                          className={`text-sm font-medium transition-colors whitespace-nowrap ${
+                            isSelected ? "text-indigo-700" : "text-indigo-600"
+                          }`}
+                        >
+                          {isSelected ? "Viewing" : "View →"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
-      </section>
 
-      {selectedResult ? (
-        <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal-card">
-            <div className="modal-header">
-              <div>
-                <p className="modal-title">Crawled source</p>
-                <p className="modal-url">{selectedResult.url}</p>
+        {/* ─── Right Column: Document Preview ─── */}
+        <div className="bg-slate-800 rounded-xl shadow-lg border border-slate-700 flex flex-col overflow-hidden lg:h-[calc(100vh-10rem)] lg:sticky lg:top-8">
+          <div className="bg-slate-900 px-4 py-3 border-b border-slate-700 flex justify-between items-center">
+            <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+              Document Preview
+              <InfoIcon content="Inspect the fetched or uploaded raw text to ensure clarity before saving it to your Library." />
+            </h3>
+            <span className="text-xs font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded">
+              {crawlData ? "Loaded" : isCrawling ? "Fetching" : "Waiting"}
+            </span>
+          </div>
+
+          <div className="flex-1 p-6 overflow-y-auto bg-slate-800 text-slate-300 font-mono text-sm leading-relaxed whitespace-pre-wrap min-h-[300px]">
+            {isCrawling ? (
+              <div className="flex items-center gap-3 text-slate-400">
+                <div className="h-4 w-4 border-2 border-slate-600 border-t-indigo-400 rounded-full animate-spin" />
+                Fetching content…
               </div>
-              <div className="modal-actions">
-                <button className="ghost-button" type="button" onClick={closeModal}>
-                  Close
-                </button>
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={handleSaveClick}
-                  disabled={isSaving || isCrawling}
-                >
-                  {isSaving ? "Saving…" : "Save"}
-                </button>
-              </div>
-            </div>
-            <div className="modal-body">
-              {isCrawling ? (
-                <div className="loading-state">
-                  <span className="loader" />
-                  Crawling content…
+            ) : crawlData ? (
+              <>
+                <div className="flex flex-wrap gap-4 mb-4 text-xs text-slate-500 border-b border-slate-700 pb-3">
+                  <span>Pages: {crawlData.pages_crawled}</span>
+                  <span>Depth: {crawlData.depth}</span>
+                  <span>Breadth: {crawlData.breadth}</span>
+                  <span>
+                    Length: {crawlData.text_length.toLocaleString()} chars
+                  </span>
                 </div>
-              ) : crawlData ? (
-                <>
-                  <div className="crawl-meta">
-                    <span>Pages: {crawlData.pages_crawled}</span>
-                    <span>Depth: {crawlData.depth}</span>
-                    <span>Breadth: {crawlData.breadth}</span>
-                    <span>Text length: {crawlData.text_length}</span>
-                  </div>
-                  <div className="crawl-text">{crawlData.combined_text}</div>
-                </>
-              ) : (
-                <p className="loading-state">No crawl data available yet.</p>
+                {crawlData.combined_text}
+              </>
+            ) : (
+              <span className="text-slate-500">
+                {`Select a document from Search, fetch via URL, or upload a file to preview its raw text contents here.\n\nOnce content is loaded, you can verify it before saving to your Document Library.`}
+              </span>
+            )}
+          </div>
+
+          {/* Save Controls */}
+          <div className="bg-slate-900 border-t border-slate-700 p-4">
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={handleSaveClick}
+                disabled={isSaving || !crawlData}
+                className="flex-1 bg-indigo-500 text-white rounded px-4 py-2 text-sm font-medium hover:bg-indigo-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSaving ? "Saving…" : "Save to Library"}
+              </button>
+              {crawlData && (
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="px-4 py-2 text-sm font-medium text-slate-300 border border-slate-600 rounded hover:bg-slate-800 transition-colors"
+                >
+                  Clear
+                </button>
               )}
             </div>
-            {saveMessage ? (
-              <div className="modal-footer">{saveMessage}</div>
-            ) : null}
+            {saveMessage && !showSaveConfirmation && (
+              <p className="text-xs mt-2 text-slate-400">{saveMessage}</p>
+            )}
           </div>
         </div>
-      ) : null}
+      </div>
 
-      {showCompanyNameDialog ? (
+      {/* ─── Company Name / Jurisdiction Dialog ─── */}
+      {showCompanyNameDialog && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
           <div className="modal-card company-name-dialog">
             <div className="modal-header">
               <div>
                 <p className="modal-title">
-                  {isStatuteSave ? "Confirm Jurisdiction" : "Confirm Company Name"}
+                  {isStatuteSave
+                    ? "Confirm Jurisdiction"
+                    : "Confirm Company Name"}
                 </p>
                 <p className="modal-subtitle">
                   {isStatuteSave
@@ -562,7 +690,10 @@ export default function GatherPage() {
             <div className="modal-body">
               {isStatuteSave ? (
                 <div className="field-group">
-                  <label className="field-label" htmlFor="statute-jurisdiction">
+                  <label
+                    className="field-label"
+                    htmlFor="statute-jurisdiction"
+                  >
                     Jurisdiction
                   </label>
                   <input
@@ -609,16 +740,18 @@ export default function GatherPage() {
             </div>
           </div>
         </div>
-      ) : null}
+      )}
 
-      {showSaveConfirmation ? (
+      {/* ─── Save Confirmation Dialog ─── */}
+      {showSaveConfirmation && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
           <div className="modal-card save-confirmation-dialog">
             <div className="modal-header">
               <div>
                 <p className="modal-title">Saved Successfully</p>
                 <p className="modal-subtitle">
-                  {saveMessage || "The policy has been saved to the collection."}
+                  {saveMessage ||
+                    "The policy has been saved to the collection."}
                 </p>
               </div>
             </div>
@@ -642,46 +775,7 @@ export default function GatherPage() {
             </div>
           </div>
         </div>
-      ) : null}
-
-      {showFileUploadModal ? (
-        <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal-card file-upload-dialog">
-            <div className="modal-header">
-              <div>
-                <p className="modal-title">Upload file</p>
-                <p className="modal-subtitle">
-                  Upload a PDF, TXT, or HTML file to add as a {mode === "policy" ? "policy" : "statute"}.
-                </p>
-              </div>
-              <button
-                className="ghost-button modal-close"
-                type="button"
-                onClick={() => setShowFileUploadModal(false)}
-                aria-label="Close"
-              >
-                ×
-              </button>
-            </div>
-            <div className="modal-body">
-              <label className="file-upload-label">
-                <input
-                  type="file"
-                  accept=".pdf,.txt,.html,.htm"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleFileUpload(file);
-                    e.target.value = "";
-                  }}
-                  className="file-upload-input"
-                />
-                <span className="file-upload-button">Choose file</span>
-                <span className="file-upload-hint">PDF, TXT, or HTML</span>
-              </label>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </>
+      )}
+    </div>
   );
 }

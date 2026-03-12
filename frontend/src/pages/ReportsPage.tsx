@@ -1,13 +1,23 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { normalizeApiError } from "../api/client";
 import { useDocuments, extractDocumentId } from "../hooks/useDocuments";
 import type { DocumentRecord } from "../types/api";
+import { InfoIcon } from "../components/Tooltip";
+import {
+  FileUp,
+  Eye,
+  FileText,
+  CheckCircle2,
+  Download,
+  XCircle,
+} from "lucide-react";
 
 export default function ReportsPage() {
   const location = useLocation();
   const policyFromState = (location.state as { policy?: DocumentRecord })?.policy;
+  const previewRef = useRef<HTMLDivElement>(null);
 
   const { documents } = useDocuments("policy");
 
@@ -86,6 +96,7 @@ export default function ReportsPage() {
       }
       const data = (await res.json()) as { content?: string; format?: string };
       setContent(data.content || "");
+      setTimeout(() => previewRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch (err) {
       setError(normalizeApiError(err) || "Failed to generate report.");
     } finally {
@@ -104,156 +115,253 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handlePreview = () => {
+    if (content) {
+      previewRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+
+  const isRunNow = source === "run_now";
+  const selectedCount = [includeGap, includeHealthScore, includeMultiJurisdictional].filter(Boolean).length;
+
+  const sections = [
+    { id: "health", label: "Executive Summary (Health Score)", checked: includeHealthScore, onChange: setIncludeHealthScore },
+    { id: "gap", label: "Detailed Gap Analysis Findings", checked: includeGap, onChange: setIncludeGap },
+    { id: "multi", label: "Multi-Jurisdictional Conflicts", checked: includeMultiJurisdictional, onChange: setIncludeMultiJurisdictional },
+  ];
+
   return (
-    <>
-      <header className="main-header">
-        <div>
-          <p className="eyebrow">Reports</p>
-          <h2>Generate compliance report</h2>
-          <p className="subtitle">
-            Export gap list, health score, and multi-jurisdictional summary as
-            Markdown or PDF.
-          </p>
+    <div className="p-8 max-w-5xl mx-auto w-full">
+      {/* Page header */}
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+          Report Generation
+          <InfoIcon content="Compile compliance engine results into professional executive summaries or detailed audit reports. Output to PDF or Markdown." />
+        </h1>
+        <p className="text-slate-500 mt-1 text-sm">
+          Configure and export assessment reports based on saved runs or live analysis.
+        </p>
+      </div>
+
+      {/* Configuration card */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <FileText className="h-5 w-5 text-indigo-500" />
+            Report Configuration
+          </h2>
         </div>
-      </header>
 
-      <section className="reports-panel">
-        <div className="panel-header">
-          <p className="panel-title">Report options</p>
-        </div>
-        <div className="reports-form">
-          <div className="field-group">
-            <label className="field-label" htmlFor="report-policy">
-              Policy
-            </label>
-            <select
-              id="report-policy"
-              value={policyId || ""}
-              onChange={(e) => {
-                const id = e.target.value;
-                const opt = policyOptions.find((p) => p.id === id);
-                setSelectedPolicy(opt?.doc ?? null);
-              }}
-            >
-              <option value="">Select a policy…</option>
-              {policyOptions.map(({ doc, id }) => (
-                <option key={id} value={id}>
-                  {doc.title || doc.company_name || id}
-                </option>
-              ))}
-            </select>
+        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8">
+          {/* Left column */}
+          <div className="space-y-6">
+            {/* Policy select */}
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">
+                Select Policy Document
+              </label>
+              <select
+                value={policyId || ""}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const opt = policyOptions.find((p) => p.id === id);
+                  setSelectedPolicy(opt?.doc ?? null);
+                }}
+                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-sm transition-all bg-white"
+              >
+                <option value="">Select a policy…</option>
+                {policyOptions.map(({ doc, id }) => (
+                  <option key={id} value={id}>
+                    {doc.title || doc.company_name || id}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Data source */}
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-3">
+                Data Source
+              </label>
+              <div className="space-y-3">
+                <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:border-indigo-200 hover:bg-slate-50 transition-colors cursor-pointer group">
+                  <input
+                    type="radio"
+                    name="source"
+                    checked={source === "latest_stored"}
+                    onChange={() => setSource("latest_stored")}
+                    className="mt-0.5 text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-slate-900 group-hover:text-indigo-900">
+                      Latest Stored Analysis Result
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                      Uses the most recent compliance engine run from the database. Faster, no re-processing needed.
+                    </div>
+                  </div>
+                </label>
+                <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:border-indigo-200 hover:bg-slate-50 transition-colors cursor-pointer group">
+                  <input
+                    type="radio"
+                    name="source"
+                    checked={source === "run_now"}
+                    onChange={() => setSource("run_now")}
+                    className="mt-0.5 text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-slate-900 group-hover:text-indigo-900">
+                      Run Analysis Now (Live Mode)
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                      Executes fresh engine runs instantly without persisting history. May take longer.
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Output format */}
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">
+                Output Format
+              </label>
+              <select
+                value={format}
+                onChange={(e) => setFormat(e.target.value as "markdown" | "pdf")}
+                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-sm transition-all bg-white"
+              >
+                <option value="pdf">PDF Document (.pdf)</option>
+                <option value="markdown">Markdown File (.md)</option>
+              </select>
+            </div>
           </div>
 
-          <div className="field-group">
-            <label className="field-label" htmlFor="report-format">
-              Format
-            </label>
-            <select
-              id="report-format"
-              value={format}
-              onChange={(e) =>
-                setFormat(e.target.value as "markdown" | "pdf")
-              }
-            >
-              <option value="markdown">Markdown</option>
-              <option value="pdf">PDF</option>
-            </select>
-          </div>
+          {/* Right column */}
+          <div className="space-y-6 md:border-l md:border-slate-100 md:pl-12">
+            {/* Include sections */}
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-3 flex items-center justify-between">
+                <span>Include Sections</span>
+                <span className="text-xs font-normal text-slate-500">
+                  {selectedCount} selected
+                </span>
+              </label>
+              <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                {sections.map((section) => (
+                  <label
+                    key={section.id}
+                    className="flex items-center gap-3 text-sm text-slate-700 cursor-pointer group"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={section.checked}
+                      onChange={(e) => section.onChange(e.target.checked)}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 transition-all"
+                    />
+                    <span className="font-medium group-hover:text-indigo-700 transition-colors">
+                      {section.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
 
-          <div className="field-group">
-            <label className="field-label" htmlFor="report-source">
-              Source
-            </label>
-            <select
-              id="report-source"
-              value={source}
-              onChange={(e) =>
-                setSource(e.target.value as "latest_stored" | "run_now")
-              }
-            >
-              <option value="latest_stored">Latest stored result</option>
-              <option value="run_now">Run now (no persist)</option>
-            </select>
-          </div>
-
-          {source === "run_now" && (
-            <div className="field-group">
-              <label className="field-label" htmlFor="report-jurisdictions">
-                Applicable jurisdictions (comma-separated)
+            {/* Target jurisdictions */}
+            <div className={isRunNow ? "" : "opacity-50"}>
+              <label className="block text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                Target Jurisdictions
+                <InfoIcon content="Only required if 'Run Analysis Now' is selected. Comma-separated, e.g. CA, VA, GDPR." />
               </label>
               <input
-                id="report-jurisdictions"
                 type="text"
                 value={applicableJurisdictions}
                 onChange={(e) => setApplicableJurisdictions(e.target.value)}
-                placeholder="e.g. CA, VA, CO"
+                disabled={!isRunNow}
+                placeholder="e.g. CA, VA, GDPR"
+                className={`w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm shadow-sm transition-all ${
+                  isRunNow
+                    ? "bg-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    : "bg-slate-50 text-slate-500 cursor-not-allowed"
+                }`}
               />
             </div>
-          )}
-
-          <div className="reports-checkboxes">
-            <label>
-              <input
-                type="checkbox"
-                checked={includeGap}
-                onChange={(e) => setIncludeGap(e.target.checked)}
-              />
-              Include gap analysis
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={includeHealthScore}
-                onChange={(e) => setIncludeHealthScore(e.target.checked)}
-              />
-              Include Privacy Health Score
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={includeMultiJurisdictional}
-                onChange={(e) =>
-                  setIncludeMultiJurisdictional(e.target.checked)
-                }
-              />
-              Include multi-jurisdictional
-            </label>
           </div>
-
-          <button
-            className="primary-button"
-            type="button"
-            onClick={handleGenerate}
-            disabled={!policyId || loading}
-          >
-            {loading ? "Generating…" : "Generate report"}
-          </button>
         </div>
 
+        {/* Error */}
         {error && (
-          <div className="error-banner">
-            <span className="error-text">{error}</span>
+          <div className="mx-6 mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+            <XCircle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-red-800">{error}</p>
           </div>
         )}
 
-        {content && (
-          <div className="reports-preview">
-            <div className="reports-preview-header">
-              <h4>Preview</h4>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={handleDownload}
-              >
-                Download .md
-              </button>
-            </div>
-            <div className="reports-preview-content reports-preview-markdown">
-              <ReactMarkdown>{content}</ReactMarkdown>
-            </div>
+        {/* Action bar */}
+        <div className="p-6 border-t border-slate-100 bg-slate-50 flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => void handleGenerate()}
+            disabled={!policyId || loading}
+            className="flex flex-1 md:flex-none justify-center items-center gap-2 bg-indigo-600 text-white rounded-lg px-6 py-3 text-sm font-semibold hover:bg-indigo-700 transition-all shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {loading ? (
+              <span className="flex items-center gap-2 animate-pulse">
+                Generating Report…
+              </span>
+            ) : content ? (
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4" /> Regenerate Report
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <FileUp className="h-4 w-4" /> Generate Report
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={handlePreview}
+            disabled={!content || loading}
+            className="flex justify-center items-center gap-2 bg-white border border-slate-300 text-slate-700 rounded-lg px-5 py-3 text-sm font-semibold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Eye className="h-4 w-4" /> Preview Draft
+          </button>
+
+          {content && (
+            <button
+              type="button"
+              onClick={handleDownload}
+              className="flex justify-center items-center gap-2 bg-white border border-slate-300 text-slate-700 rounded-lg px-5 py-3 text-sm font-semibold hover:bg-slate-50 transition-colors shadow-sm"
+            >
+              <Download className="h-4 w-4" /> Download .md
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Preview section */}
+      {content && (
+        <div ref={previewRef} className="mt-8 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <Eye className="h-5 w-5 text-indigo-500" />
+              Report Preview
+            </h2>
+            <button
+              type="button"
+              onClick={handleDownload}
+              className="flex items-center gap-2 text-sm font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors"
+            >
+              <Download className="h-4 w-4" /> Download
+            </button>
           </div>
-        )}
-      </section>
-    </>
+          <div className="p-6 prose prose-sm prose-slate max-w-none">
+            <ReactMarkdown>{content}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

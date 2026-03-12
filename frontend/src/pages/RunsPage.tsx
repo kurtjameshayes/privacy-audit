@@ -1,13 +1,32 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { apiGet, apiPost } from "../api/client";
 import { GapAnalysisResult } from "../components/GapAnalysisView";
+import { InfoIcon, Tooltip } from "../components/Tooltip";
 import type {
   RunsListResponse,
   RunDetail,
   RunSummaryItem,
 } from "../types/api";
 import { toGapAnalysisResponse } from "../types/api";
+import {
+  History,
+  FileJson,
+  Download,
+  RotateCw,
+  Trash2,
+  CheckCircle2,
+  Search,
+  Calendar as CalendarIcon,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  XCircle,
+  RefreshCw,
+  AlertCircle,
+  Loader2,
+} from "lucide-react";
 
 type GapFilter = "all" | "addressed" | "partial" | "ambiguous" | "missing" | "conflict";
 
@@ -22,13 +41,13 @@ function formatDate(value?: string): string {
 }
 
 const JOB_TYPE_LABELS: Record<string, string> = {
-  gap_analysis: "Gap analysis",
-  health_score: "Health score",
+  gap_analysis: "Gap Analysis",
+  health_score: "Health Score",
   gap_v3: "Gap v3",
   gap_v4: "Gap v4",
-  regulatory_drift: "Regulatory drift",
+  regulatory_drift: "Regulatory Drift",
   applicability: "Applicability",
-  multi_jurisdictional: "Multi-jurisdictional",
+  multi_jurisdictional: "Multi-Jurisdictional",
 };
 
 function formatJobType(value: string): string {
@@ -44,7 +63,7 @@ const COMPONENT_LABELS: Record<string, string> = {
   conflict_penalty_applied: "Conflict penalty applied",
 };
 
-function formatComponentValue(key: string, value: unknown): string {
+function formatComponentValue(_key: string, value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (typeof value === "number") return String(value);
@@ -112,103 +131,23 @@ function getPolicyIdFromDetail(detail: RunDetail | null): string | undefined {
   return (req?.policy_document_id as string) ?? (d.policy_document_id as string);
 }
 
-function RunParametersCard({
-  detail,
-  formatDate,
-}: {
-  detail: Record<string, unknown>;
-  formatDate: (v?: string) => string;
-}) {
-  const req = detail.request as Record<string, unknown> | undefined;
-  const result = detail.result as Record<string, unknown> | undefined;
-  const policyId =
-    (req?.policy_document_id as string) ??
-    (result?.policy_document_id as string) ??
-    (detail.policy_document_id as string) ??
-    "";
-  const jurisdictions =
-    (req?.applicable_jurisdictions as string[]) ??
-    (result?.applicable_jurisdictions as string[]) ??
-    (detail.applicable_jurisdictions as string[]) ??
-    [];
-  const company =
-    (result?.company_name as string | null | undefined) ??
-    (detail.company_name as string | null | undefined);
-  const jobType = detail.job_type as string | undefined;
-  const status = detail.status as string | undefined;
-  const runId = (detail.run_id ?? detail.job_id) as string | undefined;
-
-  return (
-    <div className="run-params-card">
-      <h5 className="run-params-title">Run parameters</h5>
-      <dl className="run-params-list">
-        {runId && (
-          <>
-            <dt>Run ID</dt>
-            <dd>{String(runId).slice(0, 12)}…</dd>
-          </>
-        )}
-        {jobType && (
-          <>
-            <dt>Job type</dt>
-            <dd>
-              <span className={`job-type-badge job-type-${jobType.replace(/[^a-z0-9]/gi, "-").toLowerCase()}`}>
-                {formatJobType(jobType)}
-              </span>
-            </dd>
-          </>
-        )}
-        {status && (
-          <>
-            <dt>Status</dt>
-            <dd>
-              <span className={`status-badge status-${status}`}>{status}</span>
-            </dd>
-          </>
-        )}
-        <dt>Policy document</dt>
-        <dd>{policyId || "—"}</dd>
-        <dt>Jurisdictions</dt>
-        <dd>{jurisdictions.length ? jurisdictions.join(", ") : "—"}</dd>
-        {req?.num_rows != null && (
-          <>
-            <dt>Number of rows</dt>
-            <dd>{String(req.num_rows)}</dd>
-          </>
-        )}
-        {company != null && company !== "" && (
-          <>
-            <dt>Company</dt>
-            <dd>{company}</dd>
-          </>
-        )}
-        {detail.created_at && (
-          <>
-            <dt>Started</dt>
-            <dd>{formatDate(detail.created_at as string)}</dd>
-          </>
-        )}
-        {detail.completed_at && (
-          <>
-            <dt>Completed</dt>
-            <dd>{formatDate(detail.completed_at as string)}</dd>
-          </>
-        )}
-        {detail.privacy_health_score != null && (
-          <>
-            <dt>Health score</dt>
-            <dd>{String(detail.privacy_health_score)}</dd>
-          </>
-        )}
-        {detail.error && (
-          <>
-            <dt>Error</dt>
-            <dd className="run-params-error">{String(detail.error)}</dd>
-          </>
-        )}
-      </dl>
-    </div>
-  );
+function getScoreDisplay(run: RunSummaryItem): { text: string; color: string } | null {
+  if (run.privacy_health_score != null) {
+    const score = run.privacy_health_score;
+    return {
+      text: `${score}/100`,
+      color: score >= 80 ? "text-emerald-600" : score >= 50 ? "text-amber-600" : "text-red-600",
+    };
+  }
+  const s = run.summary;
+  if (s && s.total_requirements) {
+    const addressed = s.addressed ?? 0;
+    return {
+      text: `${addressed}/${s.total_requirements}`,
+      color: addressed / s.total_requirements >= 0.8 ? "text-emerald-600" : "text-amber-600",
+    };
+  }
+  return null;
 }
 
 export default function RunsPage() {
@@ -218,6 +157,10 @@ export default function RunsPage() {
   const [types, setTypes] = useState("");
   const [limit, setLimit] = useState(50);
   const [offset, setOffset] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [showDateFilter, setShowDateFilter] = useState(false);
+  const dateFilterRef = useRef<HTMLDivElement>(null);
 
   const [data, setData] = useState<RunsListResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -256,6 +199,18 @@ export default function RunsPage() {
     return gaps.filter((g) => g.status === gapFilter);
   }, [gapResult?.gaps, gapFilter]);
 
+  /* ── Close date filter on outside click ─────────────── */
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dateFilterRef.current && !dateFilterRef.current.contains(event.target as Node)) {
+        setShowDateFilter(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  /* ── Fetch runs ──────────────────────────────────────── */
   const fetchRuns = async () => {
     setLoading(true);
     setError(null);
@@ -267,7 +222,7 @@ export default function RunsPage() {
       if (policyDocumentId) params.policy_document_id = policyDocumentId;
       if (since) params.since = since;
       if (until) params.until = until;
-      if (types) params.types = types;
+      if (types || filterType) params.types = filterType || types;
 
       const result = await apiGet<RunsListResponse>(
         "/api/compliance/runs",
@@ -319,20 +274,36 @@ export default function RunsPage() {
     void load();
   }, [selectedRunId]);
 
-  const handleDownloadJson = () => {
-    if (!runDetail) return;
-    const blob = new Blob([JSON.stringify(runDetail, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    const policyId = getPolicyIdFromDetail(runDetail as RunDetail | null) ?? "run";
-    a.download = `compliance-result-${String(policyId)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  /* ── Derived data ────────────────────────────────────── */
+  const runs = data?.runs ?? [];
+  const total = data?.total ?? 0;
+  const rangeStart = total > 0 ? data!.offset + 1 : 0;
+  const rangeEnd = data ? Math.min(data.offset + runs.length, total) : 0;
+  const hasNext = data ? data.offset + runs.length < total : false;
+  const hasPrev = offset > 0;
 
+  const uniqueTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of runs) {
+      const t = r.job_type;
+      if (t) set.add(t);
+      if (Array.isArray(r.types)) r.types.forEach((tt) => { if (tt) set.add(tt); });
+    }
+    return Array.from(set);
+  }, [runs]);
+
+  const filteredRuns = useMemo(() => {
+    if (!searchQuery) return runs;
+    const q = searchQuery.toLowerCase();
+    return runs.filter((run) => {
+      const id = (run.run_id ?? run.job_id ?? "").toLowerCase();
+      const policy = (run.policy_document_id ?? "").toLowerCase();
+      const company = (run.company_name ?? "").toLowerCase();
+      return id.includes(q) || policy.includes(q) || company.includes(q);
+    });
+  }, [runs, searchQuery]);
+
+  /* ── Action handlers ─────────────────────────────────── */
   const handleDownloadReport = async () => {
     const policyId = getPolicyIdFromDetail(runDetail as RunDetail | null);
     if (!policyId) {
@@ -360,8 +331,8 @@ export default function RunsPage() {
           (err as { error?: string }).error || res.statusText || "Report failed"
         );
       }
-      const data = (await res.json()) as { content?: string };
-      const content = data.content ?? "";
+      const d = (await res.json()) as { content?: string };
+      const content = d.content ?? "";
       const blob = new Blob([content], { type: "text/markdown" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -407,18 +378,19 @@ export default function RunsPage() {
     }
   };
 
-  const handleDelete = async () => {
-    if (!selectedRunId || !window.confirm(`Delete run ${selectedRunId}? This cannot be undone.`)) return;
+  const handleDelete = async (runId?: string) => {
+    const targetId = runId ?? selectedRunId;
+    if (!targetId || !window.confirm(`Delete run ${targetId}? This cannot be undone.`)) return;
     setDeleteLoading(true);
     setReportError(null);
     try {
-      const res = await fetch(`/api/compliance/runs/${selectedRunId}`, { method: "DELETE" });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      const res = await fetch(`/api/compliance/runs/${targetId}`, { method: "DELETE" });
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
         if (res.status === 501) setDeleteSupported(false);
-        throw new Error((data as { error?: string }).error ?? res.statusText);
+        throw new Error(d.error ?? res.statusText);
       }
-      setSelectedRunId(null);
+      if (targetId === selectedRunId) setSelectedRunId(null);
       await fetchRuns();
     } catch (err) {
       setReportError(err instanceof Error ? err.message : "Delete failed.");
@@ -427,452 +399,664 @@ export default function RunsPage() {
     }
   };
 
+  const openRunDetail = (run: RunSummaryItem, view?: "gap" | "raw") => {
+    const id = getRunId(run);
+    if (id) {
+      setSelectedRunId(id);
+      if (view) setDetailView(view);
+    }
+  };
+
+  const handleApplyDateFilter = () => {
+    setOffset(0);
+    setShowDateFilter(false);
+    void fetchRuns();
+  };
+
+  const handleClearDateFilter = () => {
+    setSince("");
+    setUntil("");
+    setShowDateFilter(false);
+  };
+
   return (
-    <>
-      <header className="main-header">
+    <div className="p-8 max-w-6xl mx-auto w-full">
+      {/* Page header */}
+      <div className="flex justify-between items-start mb-8">
         <div>
-          <p className="eyebrow">Audit Trail</p>
-          <h2>Compliance runs</h2>
-          <p className="subtitle">
-            Browse gap analysis and compliance results. View structured details
-            or download as JSON or Markdown report.
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            Compliance Run History
+            <InfoIcon content="Review previous engine runs, inspect raw JSON outputs, re-run analyses, or delete history records." />
+          </h1>
+          <p className="text-slate-500 mt-1 text-sm">
+            Log of all manual and automated compliance checks.
           </p>
         </div>
-        {data && (
-          <div className="header-card">
-            <p className="header-card-title">Total runs</p>
-            <p className="header-card-value">{data.total}</p>
-            <p className="header-card-caption">
-              {data.offset + 1}–
-              {Math.min(data.offset + data.runs.length, data.total)} shown
-            </p>
-          </div>
-        )}
-      </header>
-
-      <section className="runs-panel">
-        <div className="panel-header">
-          <p className="panel-title">Filters</p>
-        </div>
-        <div className="runs-filters">
-          <div className="field-group">
-            <label className="field-label" htmlFor="runs-policy">
-              Policy document ID
-            </label>
-            <input
-              id="runs-policy"
-              type="text"
-              value={policyDocumentId}
-              onChange={(e) => setPolicyDocumentId(e.target.value)}
-              placeholder="Filter by policy"
-            />
-          </div>
-          <div className="field-group">
-            <label className="field-label" htmlFor="runs-since">
-              Since (ISO8601)
-            </label>
-            <input
-              id="runs-since"
-              type="datetime-local"
-              value={since}
-              onChange={(e) => setSince(e.target.value)}
-            />
-          </div>
-          <div className="field-group">
-            <label className="field-label" htmlFor="runs-until">
-              Until (ISO8601)
-            </label>
-            <input
-              id="runs-until"
-              type="datetime-local"
-              value={until}
-              onChange={(e) => setUntil(e.target.value)}
-            />
-          </div>
-          <div className="field-group">
-            <label className="field-label" htmlFor="runs-types">
-              Types (comma-separated)
-            </label>
-            <input
-              id="runs-types"
-              type="text"
-              value={types}
-              onChange={(e) => setTypes(e.target.value)}
-              placeholder="gap_analysis, health_score, gap_v3, gap_v4"
-            />
-          </div>
+        <div className="flex items-center gap-3">
+          {data && (
+            <div className="text-right">
+              <p className="text-2xl font-bold text-slate-900">{total}</p>
+              <p className="text-xs text-slate-500">Total runs</p>
+            </div>
+          )}
           <button
-            className="primary-button"
             type="button"
-            onClick={fetchRuns}
+            onClick={() => void fetchRuns()}
             disabled={loading}
+            className="flex items-center gap-2 bg-white border border-slate-300 rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-50 text-slate-700 shadow-sm transition-colors disabled:opacity-50"
           >
-            {loading ? "Loading…" : "Apply filters"}
-          </button>
-          <button
-            className="ghost-button"
-            type="button"
-            onClick={fetchRuns}
-            disabled={loading}
-          >
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </button>
         </div>
+      </div>
 
+      {/* Main card */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+        {/* Filter bar */}
+        <div className="border-b border-slate-200 p-4 bg-slate-50/50">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[200px] max-w-xs">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search runs…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="!w-full !pl-9 !pr-4 !py-2 text-sm !border !border-slate-300 !rounded-lg focus:!outline-none focus:!ring-2 focus:!ring-indigo-500/20 focus:!border-indigo-500 transition-all shadow-sm bg-white"
+              />
+            </div>
+
+            <div className="h-6 w-px bg-slate-300 mx-1 hidden sm:block" />
+
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="bg-white !border !border-slate-300 !rounded-lg !px-3 !py-2 text-sm font-medium text-slate-700 shadow-sm focus:!outline-none focus:!ring-2 focus:!ring-indigo-500/20 focus:!border-indigo-500 min-w-[160px]"
+            >
+              <option value="">All Analysis Types</option>
+              {uniqueTypes.map((t) => (
+                <option key={t} value={t}>{formatJobType(t)}</option>
+              ))}
+            </select>
+
+            {/* Date range dropdown */}
+            <div className="relative ml-auto" ref={dateFilterRef}>
+              <button
+                type="button"
+                onClick={() => setShowDateFilter(!showDateFilter)}
+                className={`flex items-center gap-2 bg-white border border-slate-300 rounded-lg px-4 py-2 text-sm font-medium hover:bg-slate-50 text-slate-700 shadow-sm transition-colors ${
+                  since || until ? "ring-2 ring-indigo-500/20 border-indigo-500" : ""
+                }`}
+              >
+                <CalendarIcon className="h-4 w-4 text-slate-500" />
+                {since || until ? "Date filtered" : "Date Range"}
+                <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${showDateFilter ? "rotate-180" : ""}`} />
+              </button>
+
+              {showDateFilter && (
+                <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl shadow-lg border border-slate-200 p-4 z-10">
+                  <h3 className="font-semibold text-sm text-slate-900 mb-3">Filter by Date</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-500 mb-1">Start Date</label>
+                      <input
+                        type="datetime-local"
+                        value={since}
+                        onChange={(e) => setSince(e.target.value)}
+                        className="!w-full text-sm !border !border-slate-300 !rounded-lg !px-3 !py-2 focus:!ring-2 focus:!ring-indigo-500/20 focus:!border-indigo-500 focus:!outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-500 mb-1">End Date</label>
+                      <input
+                        type="datetime-local"
+                        value={until}
+                        onChange={(e) => setUntil(e.target.value)}
+                        className="!w-full text-sm !border !border-slate-300 !rounded-lg !px-3 !py-2 focus:!ring-2 focus:!ring-indigo-500/20 focus:!border-indigo-500 focus:!outline-none"
+                      />
+                    </div>
+                    <div className="pt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleApplyDateFilter}
+                        className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
+                      >
+                        Apply
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearDateFilter}
+                        className="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold py-2 rounded-lg transition-colors"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Error */}
         {error && (
-          <div className="error-banner">
-            <span className="error-text">{error}</span>
+          <div className="mx-4 mt-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+            <XCircle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-red-800">{error}</p>
           </div>
         )}
 
-        <div className="runs-layout">
-          <div className="runs-table-container runs-table-container--full">
-            {loading ? (
-              <div className="loading-state">
-                <span className="loader" />
-                Loading runs…
-              </div>
-            ) : data ? (
-              <>
-                <table className="runs-table">
-                  <thead>
-                    <tr>
-                      <th>Run ID</th>
-                      <th>Policy ID</th>
-                      <th>Company</th>
-                      <th>Run at</th>
-                      <th>Status</th>
-                      <th>Health Score</th>
-                      <th>Summary</th>
-                      <th>Types</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.runs.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} className="empty-cell">
-                          No runs match the filters.
-                        </td>
-                      </tr>
-                    ) : (
-                      data.runs.map((run) => {
-                        const id = getRunId(run) ?? run.policy_document_id ?? "";
-                        const displayId = run.run_id ?? run.job_id ?? "";
-                        const dateVal = run.run_at ?? run.created_at ?? run.completed_at;
-                        const typeVal = run.job_type ?? (Array.isArray(run.types) ? run.types.join(", ") : null);
-                        const statusVal = run.status;
-                        return (
-                          <tr
-                            key={id}
-                            className={
-                              selectedRunId === (run.run_id ?? run.job_id ?? null)
-                                ? "selected"
-                                : ""
-                            }
-                            onClick={() => setSelectedRunId(getRunId(run))}
-                          >
-                            <td className="runs-cell-id">
-                              {displayId ? String(displayId).slice(0, 8) + "…" : "—"}
-                            </td>
-                            <td>{run.policy_document_id ?? "—"}</td>
-                            <td>{run.company_name ?? "—"}</td>
-                            <td>{formatDate(dateVal)}</td>
-                            <td>
-                              {statusVal ? (
-                                <span
-                                  className={`status-badge status-${statusVal}`}
-                                >
-                                  {statusVal}
-                                </span>
-                              ) : (
-                                "—"
-                              )}
-                            </td>
-                            <td>{run.privacy_health_score ?? "—"}</td>
-                            <td>
-                              {(() => {
-                                const s = run.summary as { total_requirements?: number; addressed?: number; missing?: number; conflicts?: number; partial?: number; ambiguous?: number } | undefined;
-                                if (!s) return "—";
-                                const total = s.total_requirements ?? (s.addressed ?? 0) + (s.missing ?? 0) + (s.conflicts ?? 0) + (s.partial ?? 0) + (s.ambiguous ?? 0);
-                                return `${total} processed`;
-                              })()}
-                            </td>
-                            <td>{typeVal ?? "—"}</td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-                <div className="runs-pagination">
-                  <button
-                    disabled={offset === 0}
-                    onClick={() =>
-                      setOffset((o) => Math.max(0, o - limit))
-                    }
-                  >
-                    Previous
-                  </button>
-                  <span>
-                    {data.offset + 1}–
-                    {Math.min(data.offset + data.runs.length, data.total)} of{" "}
-                    {data.total}
-                  </span>
-                  <button
-                    disabled={
-                      data.offset + data.runs.length >= data.total
-                    }
-                    onClick={() => setOffset((o) => o + limit)}
-                  >
-                    Next
-                  </button>
-                </div>
-              </>
-            ) : null}
-          </div>
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50">
+              <tr>
+                <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Run Details</th>
+                <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Analysis Type</th>
+                <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Result / Score</th>
+                <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Date &amp; Status</th>
+                <th scope="col" className="relative px-6 py-4"><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-slate-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center">
+                    <div className="flex flex-col items-center justify-center text-slate-500">
+                      <RefreshCw className="h-8 w-8 text-slate-300 animate-spin mb-3" />
+                      <p className="font-medium text-slate-600">Loading runs…</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredRuns.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center">
+                    <div className="flex flex-col items-center justify-center text-slate-500">
+                      <div className="bg-slate-50 p-4 rounded-full mb-3">
+                        <History className="h-8 w-8 text-slate-300" />
+                      </div>
+                      <p className="font-medium text-slate-700">No runs found.</p>
+                      <p className="text-sm mt-1">
+                        {searchQuery ? "Try adjusting your search." : "Run a compliance engine to see results here."}
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filteredRuns.map((run) => {
+                  const id = getRunId(run) ?? run.policy_document_id ?? "";
+                  const displayId = run.run_id ?? run.job_id ?? "";
+                  const dateVal = run.run_at ?? run.created_at ?? run.completed_at;
+                  const typeVal = run.job_type ?? (Array.isArray(run.types) ? run.types[0] : null);
+                  const statusVal = run.status;
+                  const scoreDisplay = getScoreDisplay(run);
 
-          {selectedRunId && (
-            <div
-              className="runs-detail-modal-backdrop"
-              onClick={() => setSelectedRunId(null)}
-              role="presentation"
-            >
-              <div
-                className="runs-detail-modal"
-                onClick={(e) => e.stopPropagation()}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="runs-detail-title"
-              >
-          <div className="runs-detail-panel runs-detail-panel--enhanced">
-                <div className="runs-detail-header">
-                  <div className="runs-detail-header-top">
-                    <h4 id="runs-detail-title">Run detail</h4>
-                    <button
-                      className="ghost-button modal-close runs-close-btn"
-                      type="button"
-                      onClick={() => setSelectedRunId(null)}
-                      aria-label="Close"
+                  return (
+                    <tr
+                      key={id}
+                      className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
+                      onClick={() => openRunDetail(run)}
                     >
-                      ×
-                    </button>
-                  </div>
-                  <div className="runs-detail-actions">
-                    <div className="runs-view-toggle">
-                      {gapResult && (
-                        <button
-                          type="button"
-                          className={`ghost-button ${detailView === "gap" ? "is-active" : ""}`}
-                          onClick={() => setDetailView("gap")}
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                            {run.policy_document_id ?? "—"}
+                          </span>
+                          <span className="text-xs text-slate-500 mt-1 font-medium">
+                            {run.company_name ?? "—"} &bull;{" "}
+                            <span className="font-mono">
+                              {displayId ? String(displayId).slice(0, 10) + "…" : "—"}
+                            </span>
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex flex-col items-start gap-1.5">
+                          {typeVal ? (
+                            <span className="px-2.5 py-1 rounded-md bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-700 shadow-sm">
+                              {formatJobType(typeVal)}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-500">—</span>
+                          )}
+                          {Array.isArray(run.types) && run.types.length > 1 && (
+                            <span className="text-[10px] text-slate-500 font-medium tracking-wide uppercase">
+                              + {run.types.length - 1} more
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {scoreDisplay ? (
+                          <span className={`text-base font-bold ${scoreDisplay.color}`}>
+                            {scoreDisplay.text}
+                          </span>
+                        ) : (
+                          <span className="text-sm text-slate-500 font-medium italic">Detailed Output</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-sm text-slate-700 font-medium">
+                            {formatDate(dateVal)}
+                          </span>
+                          <StatusBadge status={statusVal} />
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <div
+                          className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          Gap analysis
-                        </button>
+                          <Tooltip content="View JSON Data">
+                            <button
+                              type="button"
+                              className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-md transition-colors flex items-center justify-center"
+                              onClick={() => openRunDetail(run, "raw")}
+                            >
+                              <FileJson className="h-4 w-4" />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="Re-run Engine">
+                            <button
+                              type="button"
+                              className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-md transition-colors flex items-center justify-center"
+                              onClick={() => openRunDetail(run)}
+                            >
+                              <RotateCw className="h-4 w-4" />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="Delete Run">
+                            <button
+                              type="button"
+                              className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-md transition-colors flex items-center justify-center ml-1"
+                              onClick={() => void handleDelete(getRunId(run) ?? undefined)}
+                              disabled={deleteLoading}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        {data && total > 0 && (
+          <div className="px-6 py-3 bg-slate-50/50 border-t border-slate-200 flex items-center justify-between text-sm">
+            <span className="text-xs text-slate-500">
+              Showing {rangeStart}–{rangeEnd} of {total} runs
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={!hasPrev}
+                onClick={() => setOffset((o) => Math.max(0, o - limit))}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm transition-colors"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" /> Previous
+              </button>
+              <button
+                type="button"
+                disabled={!hasNext}
+                onClick={() => setOffset((o) => o + limit)}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm transition-colors"
+              >
+                Next <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Detail Modal ─────────────────────────────────── */}
+      {selectedRunId && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-start justify-center pt-[5vh] overflow-y-auto"
+          onClick={() => setSelectedRunId(null)}
+          role="presentation"
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-3xl mx-4 mb-8 flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="runs-detail-title"
+          >
+            {/* Modal header */}
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between flex-shrink-0">
+              <h2 id="runs-detail-title" className="text-lg font-bold text-slate-900">
+                Run Detail
+              </h2>
+              <button
+                type="button"
+                onClick={() => setSelectedRunId(null)}
+                className="text-slate-400 hover:text-slate-600 transition-colors p-1"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal action bar */}
+            <div className="px-6 py-3 border-b border-slate-200 bg-slate-50/50 flex flex-wrap items-center gap-2 flex-shrink-0">
+              {/* View toggles */}
+              <div className="flex items-center gap-1 mr-2">
+                {gapResult && (
+                  <button
+                    type="button"
+                    onClick={() => setDetailView("gap")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      detailView === "gap" ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    Gap Analysis
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDetailView("raw")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    detailView === "raw" ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  Raw JSON
+                </button>
+              </div>
+
+              <div className="h-5 w-px bg-slate-300 hidden sm:block" />
+
+              {/* Re-run controls */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={rerunNumRows}
+                  onChange={(e) => setRerunNumRows(e.target.value)}
+                  placeholder="Rows"
+                  className="!w-20 !px-2 !py-1.5 text-xs !border !border-slate-300 !rounded-lg focus:!outline-none focus:!ring-2 focus:!ring-indigo-500/20"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleRerun()}
+                  disabled={!runDetail || rerunLoading || !getPolicyIdFromDetail(runDetail as RunDetail | null)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg hover:bg-indigo-100 disabled:opacity-50 transition-colors"
+                >
+                  <RotateCw className={`h-3.5 w-3.5 ${rerunLoading ? "animate-spin" : ""}`} />
+                  {rerunLoading ? "Running…" : "Re-run"}
+                </button>
+              </div>
+
+              {/* Downloads + Delete */}
+              <div className="flex items-center gap-1 ml-auto">
+                <Tooltip content="Download Report (Markdown)">
+                  <button
+                    type="button"
+                    onClick={() => void handleDownloadReport()}
+                    disabled={!runDetail || reportLoading}
+                    className="text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-md transition-colors disabled:opacity-40"
+                  >
+                    <Download className={`h-4 w-4 ${reportLoading ? "animate-pulse" : ""}`} />
+                  </button>
+                </Tooltip>
+                <Tooltip content="Delete Run">
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete()}
+                    disabled={!runDetail || deleteLoading || deleteSupported === false}
+                    className="text-slate-500 hover:text-red-600 hover:bg-red-50 p-2 rounded-md transition-colors disabled:opacity-40 ml-1"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+
+            {/* Modal content */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {detailLoading ? (
+                <div className="flex flex-col items-center justify-center py-12 text-slate-500">
+                  <Loader2 className="h-8 w-8 animate-spin text-slate-300 mb-3" />
+                  <p className="font-medium">Loading run detail…</p>
+                </div>
+              ) : runDetail ? (
+                <div className="space-y-5">
+                  {reportError && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+                      <XCircle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-sm text-red-800">{reportError}</p>
+                    </div>
+                  )}
+
+                  <RunParametersCard detail={runDetail as Record<string, unknown>} />
+
+                  {detailView === "raw" ? (
+                    <pre className="text-xs bg-slate-900 text-emerald-400 p-4 rounded-lg overflow-x-auto max-h-[50vh]">
+                      {JSON.stringify(runDetail, null, 2)}
+                    </pre>
+                  ) : (runDetail as Record<string, unknown>).status === "failed" ? (
+                    <div className="flex flex-col items-center py-8 text-slate-500">
+                      <AlertCircle className="h-10 w-10 text-red-400 mb-3" />
+                      <p className="font-semibold text-red-700">Job failed</p>
+                      {(runDetail as Record<string, unknown>).error && (
+                        <p className="text-sm text-red-600 mt-1 max-w-md text-center">
+                          {String((runDetail as Record<string, unknown>).error)}
+                        </p>
                       )}
                       <button
                         type="button"
-                        className={`ghost-button ${detailView === "raw" ? "is-active" : ""}`}
                         onClick={() => setDetailView("raw")}
+                        className="mt-3 text-sm font-semibold text-indigo-600 hover:underline"
                       >
-                        Raw JSON
+                        View raw JSON
                       </button>
                     </div>
-                    <div className="runs-detail-rerun">
-                      <label className="runs-num-rows-label">
-                        <span>Number of rows:</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={rerunNumRows}
-                          onChange={(e) => setRerunNumRows(e.target.value)}
-                          placeholder="default"
-                        />
-                      </label>
+                  ) : (runDetail as Record<string, unknown>).status === "running" ||
+                    (runDetail as Record<string, unknown>).status === "pending" ? (
+                    <div className="flex flex-col items-center py-8 text-slate-500">
+                      <Loader2 className="h-10 w-10 animate-spin text-indigo-400 mb-3" />
+                      <p className="font-semibold text-slate-700">Job is running</p>
+                      <p className="text-sm mt-1 max-w-md text-center">
+                        Compliance analysis is in progress. Results will appear when complete.
+                      </p>
                       <button
                         type="button"
-                        className="ghost-button"
-                        onClick={handleRerun}
-                        disabled={!runDetail || rerunLoading || !getPolicyIdFromDetail(runDetail as RunDetail | null)}
+                        onClick={() => setDetailView("raw")}
+                        className="mt-3 text-sm font-semibold text-indigo-600 hover:underline"
                       >
-                        {rerunLoading ? "Re-running…" : "Re-run"}
+                        View raw JSON
                       </button>
                     </div>
-                    <div className="runs-download-buttons">
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={handleDownloadJson}
-                        disabled={!runDetail}
-                      >
-                        Download JSON
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={handleDownloadReport}
-                        disabled={!runDetail || reportLoading}
-                      >
-                        {reportLoading ? "Generating…" : "Download report"}
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={handleDelete}
-                        disabled={!runDetail || deleteLoading || deleteSupported === false}
-                      >
-                        {deleteLoading ? "Deleting…" : "Delete"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="runs-detail-content">
-                {detailLoading ? (
-                  <div className="loading-state">
-                    <span className="loader" />
-                    Loading…
-                  </div>
-                ) : runDetail ? (
-                  <>
-                    {reportError && (
-                      <div className="error-banner runs-report-error">
-                        <span className="error-text">{reportError}</span>
-                      </div>
-                    )}
-                    <RunParametersCard
-                      detail={runDetail as Record<string, unknown>}
-                      formatDate={formatDate}
+                  ) : gapResult ? (
+                    <GapAnalysisResult
+                      result={gapResult}
+                      filteredItems={gapFilteredItems}
+                      gapFilter={gapFilter}
+                      onFilterChange={setGapFilter}
+                      expandedGapIndex={expandedGapIndex}
+                      onExpandGap={setExpandedGapIndex}
                     />
-                    {detailView === "raw" ? (
-                      <pre className="run-detail-json">
-                        {JSON.stringify(runDetail, null, 2)}
-                      </pre>
-                    ) : (runDetail as Record<string, unknown>).status === "failed" ? (
-                      <div className="run-status-failed">
-                        <p className="run-status-message">Job failed</p>
-                        {(runDetail as Record<string, unknown>).error && (
-                          <p className="run-status-error">
-                            {String((runDetail as Record<string, unknown>).error)}
-                          </p>
-                        )}
-                        <button
-                          type="button"
-                          className="ghost-button"
-                          onClick={() => setDetailView("raw")}
-                        >
-                          View raw JSON
-                        </button>
-                      </div>
-                    ) : (runDetail as Record<string, unknown>).status === "running" ||
-                      (runDetail as Record<string, unknown>).status === "pending" ? (
-                      <div className="run-status-running">
-                        <span className="loader" />
-                        <p className="run-status-message">Job is running</p>
-                        <p className="run-status-hint">
-                          Compliance analysis is in progress. Results will appear when complete.
-                        </p>
-                        <button
-                          type="button"
-                          className="ghost-button"
-                          onClick={() => setDetailView("raw")}
-                        >
-                          View raw JSON
-                        </button>
-                      </div>
-                    ) : gapResult ? (
-                      <div className="runs-gap-view">
-                        <GapAnalysisResult
-                          result={gapResult}
-                          filteredItems={gapFilteredItems}
-                          gapFilter={gapFilter}
-                          onFilterChange={setGapFilter}
-                          expandedGapIndex={expandedGapIndex}
-                          onExpandGap={setExpandedGapIndex}
-                        />
-                      </div>
-                    ) : runJobType === "health_score" && scoreAssessmentResult ? (
-                      <div className="runs-score-assessment">
-                        <h5 className="runs-score-assessment-title">Score assessment</h5>
-                        <div className="runs-score-assessment-content">
-                          {scoreAssessmentResult.reportText && (
-                            <div className="runs-score-assessment-text">
-                              <ReactMarkdown>{scoreAssessmentResult.reportText}</ReactMarkdown>
-                            </div>
-                          )}
-                          {scoreAssessmentResult.error && (
-                            <p className="runs-score-error">{scoreAssessmentResult.error}</p>
-                          )}
-                          {scoreAssessmentResult.privacy_health_score != null ? (
-                            <div className="runs-score-value">
-                              <span className="runs-score-number">{scoreAssessmentResult.privacy_health_score}</span>
-                              <span className="runs-score-label">Privacy health score</span>
-                            </div>
-                          ) : !scoreAssessmentResult.error ? (
-                            <p className="runs-score-unavailable">Score unavailable</p>
-                          ) : null}
-                          {scoreAssessmentResult.components && Object.keys(scoreAssessmentResult.components).length > 0 && (
-                            <dl className="runs-score-components">
-                              {Object.entries(scoreAssessmentResult.components).map(([k, v]) => (
-                                <div key={k}>
-                                  <dt>{COMPONENT_LABELS[k] ?? k.replace(/_/g, " ")}</dt>
-                                  <dd>{formatComponentValue(k, v)}</dd>
-                                </div>
-                              ))}
-                            </dl>
-                          )}
-                          {scoreAssessmentResult.score_breakdown && Object.keys(scoreAssessmentResult.score_breakdown).length > 0 && (
-                            <div className="runs-score-breakdown">
-                              <h6 className="runs-score-breakdown-title">Score breakdown</h6>
-                              {Object.entries(scoreAssessmentResult.score_breakdown).map(([sectionKey, sectionVal]) => {
-                                if (typeof sectionVal !== "object" || sectionVal === null || Array.isArray(sectionVal)) return null;
-                                const entries = Object.entries(sectionVal as Record<string, unknown>);
-                                if (entries.length === 0) return null;
-                                const sectionLabel = sectionKey === "by_jurisdiction" ? "By jurisdiction" : sectionKey === "by_category" ? "By category" : sectionKey.replace(/_/g, " ");
-                                return (
-                                  <div key={sectionKey} className="runs-score-breakdown-section">
-                                    <p className="runs-score-breakdown-section-label">{sectionLabel}</p>
-                                    <table className="runs-score-breakdown-table">
-                                      <tbody>
-                                        {entries.map(([k, v]) => (
-                                          <tr key={k}>
-                                            <td>{k.replace(/_/g, " ")}</td>
-                                            <td>{formatComponentValue(k, v)}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
+                  ) : runJobType === "health_score" && scoreAssessmentResult ? (
+                    <div className="space-y-4">
+                      <h3 className="text-sm font-semibold text-slate-700">Score Assessment</h3>
+
+                      {scoreAssessmentResult.reportText && (
+                        <div className="prose prose-sm max-w-none bg-slate-50 p-4 rounded-lg border border-slate-200">
+                          <ReactMarkdown>{scoreAssessmentResult.reportText}</ReactMarkdown>
                         </div>
+                      )}
+
+                      {scoreAssessmentResult.error && (
+                        <p className="text-sm text-red-600">{scoreAssessmentResult.error}</p>
+                      )}
+
+                      {scoreAssessmentResult.privacy_health_score != null ? (
+                        <div className="flex items-end gap-2">
+                          <span className="text-4xl font-bold text-slate-900">
+                            {scoreAssessmentResult.privacy_health_score}
+                          </span>
+                          <span className="text-sm text-slate-500 mb-1">Privacy health score</span>
+                        </div>
+                      ) : !scoreAssessmentResult.error ? (
+                        <p className="text-sm text-slate-500 italic">Score unavailable</p>
+                      ) : null}
+
+                      {scoreAssessmentResult.components && Object.keys(scoreAssessmentResult.components).length > 0 && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wider">Components</h4>
+                          <div className="grid grid-cols-2 gap-2">
+                            {Object.entries(scoreAssessmentResult.components).map(([k, v]) => (
+                              <div key={k} className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+                                <p className="text-xs text-slate-500 capitalize">{COMPONENT_LABELS[k] ?? k.replace(/_/g, " ")}</p>
+                                <p className="text-sm font-semibold text-slate-800 mt-0.5">{formatComponentValue(k, v)}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {scoreAssessmentResult.score_breakdown && Object.keys(scoreAssessmentResult.score_breakdown).length > 0 && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wider">Score Breakdown</h4>
+                          {Object.entries(scoreAssessmentResult.score_breakdown).map(([sectionKey, sectionVal]) => {
+                            if (typeof sectionVal !== "object" || sectionVal === null || Array.isArray(sectionVal)) return null;
+                            const entries = Object.entries(sectionVal as Record<string, unknown>);
+                            if (entries.length === 0) return null;
+                            const sectionLabel = sectionKey === "by_jurisdiction" ? "By jurisdiction" : sectionKey === "by_category" ? "By category" : sectionKey.replace(/_/g, " ");
+                            return (
+                              <div key={sectionKey} className="mb-3">
+                                <p className="text-xs font-medium text-slate-500 mb-1 capitalize">{sectionLabel}</p>
+                                <div className="overflow-x-auto">
+                                  <table className="min-w-full text-sm">
+                                    <tbody className="divide-y divide-slate-100">
+                                      {entries.map(([k, v]) => (
+                                        <tr key={k}>
+                                          <td className="py-1.5 pr-4 text-slate-600 capitalize">{k.replace(/_/g, " ")}</td>
+                                          <td className="py-1.5 font-medium text-slate-800">{formatComponentValue(k, v)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center py-8 text-slate-500">
+                      <div className="bg-slate-50 p-4 rounded-full mb-3">
+                        <History className="h-8 w-8 text-slate-300" />
                       </div>
-                    ) : (
-                      <div className="run-status-no-results">
-                        <p className="run-status-message">No compliance results</p>
-                        <p className="run-status-hint">
-                          This run has no gap analysis or score assessment results to display.
-                        </p>
-                        <button
-                          type="button"
-                          className="ghost-button"
-                          onClick={() => setDetailView("raw")}
-                        >
-                          View raw JSON
-                        </button>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <p>Failed to load run detail.</p>
-                )}
+                      <p className="font-semibold text-slate-700">No compliance results</p>
+                      <p className="text-sm mt-1 max-w-md text-center">
+                        This run has no gap analysis or score assessment results to display.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setDetailView("raw")}
+                        className="mt-3 text-sm font-semibold text-indigo-600 hover:underline"
+                      >
+                        View raw JSON
+                      </button>
+                    </div>
+                  )}
                 </div>
-          </div>
-              </div>
+              ) : (
+                <p className="text-sm text-slate-500 text-center py-8">Failed to load run detail.</p>
+              )}
             </div>
-          )}
+          </div>
         </div>
-      </section>
-    </>
+      )}
+    </div>
+  );
+}
+
+/* ── Run parameters card ───────────────────────────────────────────── */
+
+function RunParametersCard({ detail }: { detail: Record<string, unknown> }) {
+  const req = detail.request as Record<string, unknown> | undefined;
+  const result = detail.result as Record<string, unknown> | undefined;
+  const policyId =
+    (req?.policy_document_id as string) ??
+    (result?.policy_document_id as string) ??
+    (detail.policy_document_id as string) ??
+    "";
+  const jurisdictions =
+    (req?.applicable_jurisdictions as string[]) ??
+    (result?.applicable_jurisdictions as string[]) ??
+    (detail.applicable_jurisdictions as string[]) ??
+    [];
+  const company =
+    (result?.company_name as string | null | undefined) ??
+    (detail.company_name as string | null | undefined);
+  const jobType = detail.job_type as string | undefined;
+  const status = detail.status as string | undefined;
+  const runId = (detail.run_id ?? detail.job_id) as string | undefined;
+
+  const items: Array<{ label: string; value: React.ReactNode }> = [];
+
+  if (runId) items.push({ label: "Run ID", value: <span className="font-mono text-xs">{String(runId).slice(0, 16)}…</span> });
+  if (jobType) items.push({
+    label: "Job type",
+    value: (
+      <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-700">
+        {formatJobType(jobType)}
+      </span>
+    ),
+  });
+  if (status) items.push({ label: "Status", value: <StatusBadge status={status} /> });
+  items.push({ label: "Policy document", value: policyId || "—" });
+  items.push({ label: "Jurisdictions", value: jurisdictions.length ? jurisdictions.join(", ") : "—" });
+  if (req?.num_rows != null) items.push({ label: "Number of rows", value: String(req.num_rows) });
+  if (company != null && company !== "") items.push({ label: "Company", value: company });
+  if (detail.created_at) items.push({ label: "Started", value: formatDate(detail.created_at as string) });
+  if (detail.completed_at) items.push({ label: "Completed", value: formatDate(detail.completed_at as string) });
+  if (detail.privacy_health_score != null) items.push({ label: "Health score", value: String(detail.privacy_health_score) });
+  if (detail.error) items.push({ label: "Error", value: <span className="text-red-600">{String(detail.error)}</span> });
+
+  return (
+    <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
+      <h4 className="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wider">Run Parameters</h4>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        {items.map((item) => (
+          <div key={item.label} className="contents">
+            <dt className="text-slate-500">{item.label}</dt>
+            <dd className="text-slate-800 font-medium truncate">{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+/* ── Status badge ──────────────────────────────────────────────────── */
+
+function StatusBadge({ status }: { status?: string }) {
+  if (!status) return <span className="text-xs text-slate-500">—</span>;
+
+  const config: Record<string, { icon: typeof CheckCircle2; color: string }> = {
+    completed: { icon: CheckCircle2, color: "text-emerald-600" },
+    running: { icon: Loader2, color: "text-amber-600" },
+    pending: { icon: Loader2, color: "text-slate-500" },
+    failed: { icon: AlertCircle, color: "text-red-600" },
+  };
+
+  const c = config[status] ?? { icon: CheckCircle2, color: "text-slate-500" };
+  const Icon = c.icon;
+
+  return (
+    <span className={`flex items-center gap-1 text-xs font-semibold ${c.color}`}>
+      <Icon className={`h-3 w-3 ${status === "running" ? "animate-spin" : ""}`} />
+      {status.charAt(0).toUpperCase() + status.slice(1)}
+    </span>
   );
 }

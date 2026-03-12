@@ -237,6 +237,19 @@ export interface ErrorResponse {
   error?: string;
 }
 
+export interface SuggestPolicyRequest {
+  policy_text: string;
+  gap_analysis_text: string;
+  gap_analysis_match: string;
+  statute_text: string;
+}
+
+export interface SuggestPolicyResponse {
+  suggested_policy_text?: string;
+  modifications_description?: string;
+  analyzed_at?: string;
+}
+
 export interface WorkflowStepState {
   completed: boolean;
   completed_at: string | null;

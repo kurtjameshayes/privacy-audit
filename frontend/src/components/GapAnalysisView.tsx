@@ -1,6 +1,28 @@
+import { useState, useCallback } from "react";
+import { Copy, Check } from "lucide-react";
 import type { GapAnalysisResponse, GapItem, GapSummary } from "../types/api";
 
 type GapFilter = "all" | "addressed" | "partial" | "ambiguous" | "missing" | "conflict";
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="copy-icon-btn"
+      title="Copy to clipboard"
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  );
+}
 
 function truncateRequirement(text: string, maxLen: number): string {
   if (!text || text.length <= maxLen) return text;
@@ -103,7 +125,7 @@ export function GapItemCard({
         <div className="gap-item-body">
           {gap.policy_quote && (
             <div className="gap-item-detail-block">
-              <p className="compliance-detail-label">Policy quote</p>
+              <p className="compliance-detail-label">Policy quote <CopyButton text={gap.policy_quote} /></p>
               <blockquote className="applied-statute-span">
                 {gap.policy_quote}
               </blockquote>
@@ -122,7 +144,7 @@ export function GapItemCard({
           )}
           {gap.statute_quote && (
             <div className="gap-item-detail-block">
-              <p className="compliance-detail-label">Statute requirement</p>
+              <p className="compliance-detail-label">Statute requirement <CopyButton text={gap.statute_quote} /></p>
               <blockquote className="gap-statute-quote">
                 {gap.statute_quote}
               </blockquote>
@@ -130,7 +152,7 @@ export function GapItemCard({
           )}
           {gap.conflict_description && (
             <div className="gap-item-detail-block gap-conflict-block">
-              <p className="compliance-detail-label">Conflict</p>
+              <p className="compliance-detail-label">Conflict <CopyButton text={gap.conflict_description} /></p>
               <div className="gap-conflict-text">
                 <FormattedComplianceText text={gap.conflict_description} />
               </div>
@@ -150,7 +172,7 @@ export function GapItemCard({
             <div className="gap-expanded-context">
               {gap.statute_subchunk_text && (
                 <div className="gap-item-detail-block">
-                  <p className="compliance-detail-label">Statute context</p>
+                  <p className="compliance-detail-label">Statute context <CopyButton text={gap.statute_subchunk_text} /></p>
                   <div className="gap-context-block">
                     <FormattedComplianceText text={gap.statute_subchunk_text} />
                   </div>
@@ -158,7 +180,7 @@ export function GapItemCard({
               )}
               {gap.policy_subchunk_text && (
                 <div className="gap-item-detail-block">
-                  <p className="compliance-detail-label">Policy context</p>
+                  <p className="compliance-detail-label">Policy context <CopyButton text={gap.policy_subchunk_text} /></p>
                   <div className="gap-context-block">
                     <FormattedComplianceText text={gap.policy_subchunk_text} />
                   </div>

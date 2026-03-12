@@ -1,55 +1,75 @@
 import { Outlet, NavLink } from "react-router-dom";
+import {
+  RefreshCw,
+  Library,
+  ShieldCheck,
+  Clock,
+  FileText,
+  Lightbulb,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
-const navItems = [
-  { to: "/gather", label: "Gather" },
-  { to: "/policies", label: "Documents" },
-  { to: "/compliance", label: "Compliance" },
-  { to: "/alerts", label: "Alerts" },
-  { to: "/runs", label: "Runs" },
-  { to: "/reports", label: "Reports" },
-] as const;
+const navItems: ReadonlyArray<{
+  to: string;
+  label: string;
+  desc: string;
+  icon: LucideIcon;
+}> = [
+  { to: "/gather", label: "Gather", desc: "Find and import privacy texts", icon: RefreshCw },
+  { to: "/policies", label: "Documents", desc: "Library of policies and statutes", icon: Library },
+  { to: "/compliance", label: "Compliance Analysis", desc: "Evaluate policy adherence", icon: ShieldCheck },
+  { to: "/advisor", label: "Policy Advisor", desc: "AI-suggested rewrites to close gaps", icon: Lightbulb },
+  { to: "/runs", label: "Run History", desc: "Review past analysis results", icon: Clock },
+  { to: "/reports", label: "Reports", desc: "Generate compliance summaries", icon: FileText },
+];
 
 export default function Layout() {
   return (
-    <div className="app-shell">
-      <header className="app-topbar">
-        <div className="app-topbar-left">
-          <div className="app-logo">PA</div>
-          <div className="app-brand">
-            <span className="app-brand-name">Privacy Audit Studio</span>
-            <span className="app-brand-tagline">Policy Intelligence Lab</span>
-          </div>
+    <div className="flex h-screen overflow-hidden bg-slate-50">
+      <aside className="w-64 min-w-[256px] bg-slate-900 text-white flex flex-col">
+        <div className="px-5 py-6">
+          <h1 className="text-lg font-bold text-white leading-tight">
+            Privacy Audit
+            <br />
+            Studio
+          </h1>
         </div>
-        <nav className="app-topbar-nav">
-          {navItems.map(({ to, label }) => (
+
+        <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
+          {navItems.map(({ to, label, desc, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
               className={({ isActive }) =>
-                `app-topbar-nav-item ${isActive ? "is-active" : ""}`
+                `flex items-start gap-3 px-3 py-3 rounded-lg text-sm transition-colors no-underline ${
+                  isActive
+                    ? "bg-indigo-600 text-white"
+                    : "text-slate-400 hover:text-white hover:bg-slate-800"
+                }`
               }
               end={to === "/"}
             >
-              {label}
+              <Icon className="h-5 w-5 mt-0.5 flex-shrink-0" />
+              <div>
+                <span className="font-medium block">{label}</span>
+                <span className="text-xs opacity-60">{desc}</span>
+              </div>
             </NavLink>
           ))}
         </nav>
-        <div className="app-topbar-right">
-          <span className="app-topbar-meta">Policy Vault</span>
-          <span className="app-topbar-meta-divider">·</span>
-          <span className="app-topbar-meta">Gather → Index → Compare</span>
+
+        <div className="px-5 py-4 border-t border-slate-700/50">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-white text-sm font-medium flex-shrink-0">
+              PO
+            </div>
+            <span className="text-sm text-slate-300">Privacy Officer</span>
+          </div>
         </div>
-      </header>
-      <div className="app-subbar">
-        <span className="app-subbar-text">
-          Gather, index, and compare privacy policies with statutory and industry
-          standards.
-        </span>
-      </div>
-      <main className="main-panel">
-        <div className="main-panel-inner">
-          <Outlet />
-        </div>
+      </aside>
+
+      <main className="flex-1 min-w-0 overflow-y-auto">
+        <Outlet />
       </main>
     </div>
   );
