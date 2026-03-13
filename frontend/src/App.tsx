@@ -7,6 +7,7 @@ import AdvisorPage from "./pages/AdvisorPage";
 import AlertsPage from "./pages/AlertsPage";
 import RunsPage from "./pages/RunsPage";
 import ReportsPage from "./pages/ReportsPage";
+import ConsumerRightsRouterPage from "./pages/ConsumerRightsRouterPage";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="gather" element={<GatherPage />} />
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="compliance" element={<CompliancePage />} />
+          <Route path="consumer-rights" element={<ConsumerRightsRouterPage />} />
           <Route path="advisor" element={<AdvisorPage />} />
           <Route path="alerts" element={<AlertsPage />} />
           <Route path="runs" element={<RunsPage />} />

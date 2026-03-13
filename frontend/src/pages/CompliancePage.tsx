@@ -42,6 +42,7 @@ type ComplianceFilter = "all" | "compliant" | "non_compliant" | "neither";
 type GapFilter = "all" | "addressed" | "partial" | "ambiguous" | "missing" | "conflict";
 type EngineId = "gap" | "health" | "multi" | "policystatute";
 type ResultTab = "gap" | "health" | "multi" | "policy-statute";
+type ComplianceJobType = "gap_analysis" | "health_score" | "multi_jurisdictional" | "policy_statute";
 
 const ENGINE_LIST: ReadonlyArray<{ id: EngineId; title: string; desc: string }> = [
   { id: "gap", title: "Gap Analysis", desc: "Identifies missing or deficient clauses compared to statutes." },
@@ -138,6 +139,9 @@ export default function CompliancePage() {
   const [numRows, setNumRows] = useState<string>("");
   const [activeTab, setActiveTab] = useState<ResultTab>("gap");
   const [jobToast, setJobToast] = useState<{ engine: string; jobId: string } | null>(null);
+  const [jobSubmitting, setJobSubmitting] = useState(false);
+  const [jobSubmitError, setJobSubmitError] = useState<string | null>(null);
+  const [pendingJobEngine, setPendingJobEngine] = useState<string | null>(null);
 
   const policyId = selectedPolicy ? extractDocumentId(selectedPolicy) : "";
   const { state: workflowState, refetch: refetchWorkflow } = useWorkflowState(policyId || null, "policy");
@@ -369,16 +373,77 @@ export default function CompliancePage() {
 
   const dismissToast = useCallback(() => setJobToast(null), []);
 
-  const handleRunSelected = () => {
-    const engineLabel = ENGINE_LIST.find((e) => e.id === selectedEngine)?.title ?? selectedEngine;
-    const jobId = `CJ-${Date.now().toString(36).toUpperCase()}`;
-    setJobToast({ engine: engineLabel, jobId });
+  const handleRunSelected = async () => {
+    if (!policyId) return;
+    if (selectedEngine === "multi" && jurisdictions.length === 0) {
+      setJobSubmitError("Enter jurisdictions (e.g. CA, VA, CO).");
+      return;
+    }
+    if (selectedEngine === "policystatute" && !policyStatuteJurisdiction.trim()) {
+      setJobSubmitError("Enter a jurisdiction (e.g. CA).");
+      return;
+    }
 
-    switch (selectedEngine) {
-      case "gap": void handleRunGap(); break;
-      case "health": void handleRunHealth(); break;
-      case "multi": void handleRunMulti(); break;
-      case "policystatute": void handleRunPolicyStatute(); break;
+    const engineLabel = ENGINE_LIST.find((e) => e.id === selectedEngine)?.title ?? selectedEngine;
+    setJobSubmitting(true);
+    setPendingJobEngine(engineLabel);
+    setJobSubmitError(null);
+
+    // Clear prior inline results so the panel doesn't imply a fresh completion.
+    setGapResult(null);
+    setGapError(null);
+    setHealthResult(null);
+    setHealthError(null);
+    setMultiResult(null);
+    setMultiError(null);
+    setPolicyStatuteResult(null);
+    setPolicyStatuteError(null);
+
+    let jobType: ComplianceJobType = "gap_analysis";
+    if (selectedEngine === "health") jobType = "health_score";
+    if (selectedEngine === "multi") jobType = "multi_jurisdictional";
+    if (selectedEngine === "policystatute") jobType = "policy_statute";
+
+    const payload: Record<string, unknown> = {
+      job_type: jobType,
+      policy_document_id: policyId,
+      applicable_jurisdictions: jurisdictions.length > 0 ? jurisdictions : undefined,
+    };
+    if (selectedEngine === "gap") {
+      const n = numRows.trim() ? parseInt(numRows, 10) : undefined;
+      if (n !== undefined && !Number.isNaN(n) && n > 0) {
+        payload.num_rows = n;
+      }
+    }
+    if (selectedEngine === "policystatute") {
+      payload.jurisdiction = policyStatuteJurisdiction.trim();
+      payload.policy_collection = DEFAULT_POLICY_COLLECTION;
+    }
+
+    try {
+      const res = await fetch("/api/compliance/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 409) void refetchWorkflow();
+        throw new Error(
+          (err as { error?: string }).error || res.statusText || "Failed to start job"
+        );
+      }
+      const data = (await res.json()) as { job_id?: string };
+      if (!data.job_id) {
+        throw new Error("Job started but no job_id was returned.");
+      }
+      setJobToast({ engine: engineLabel, jobId: data.job_id });
+      setPageTab("analysis");
+    } catch (err) {
+      setJobSubmitError(normalizeApiError(err) || "Failed to start compliance job.");
+    } finally {
+      setJobSubmitting(false);
+      setPendingJobEngine(null);
     }
   };
 
@@ -416,12 +481,13 @@ export default function CompliancePage() {
   const healthScore = healthResult?.privacy_health_score as number | undefined;
 
   const isSelectedLoading =
+    jobSubmitting ||
     (selectedEngine === "gap" && gapLoading) ||
     (selectedEngine === "health" && healthLoading) ||
     (selectedEngine === "multi" && multiLoading) ||
     (selectedEngine === "policystatute" && policyStatuteLoading);
 
-  const isAnyLoading = gapLoading || healthLoading || multiLoading || policyStatuteLoading;
+  const isAnyLoading = jobSubmitting || gapLoading || healthLoading || multiLoading || policyStatuteLoading;
 
   const resultTabs = useMemo(() => {
     const tabs: Array<{ id: ResultTab; label: string }> = [];
@@ -652,13 +718,13 @@ export default function CompliancePage() {
             <div className="mt-6 pt-6 border-t border-slate-100">
               <button
                 type="button"
-                onClick={handleRunSelected}
+                onClick={() => void handleRunSelected()}
                 disabled={!policyId || !policyReadyForCompliance || isSelectedLoading}
                 className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white rounded-lg px-4 py-3 text-sm font-semibold hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed shadow-sm transition-all"
               >
                 {isSelectedLoading ? (
                   <span className="flex items-center gap-2 animate-pulse">
-                    <Sparkles className="h-4 w-4" /> Analyzing Policy…
+                    <Sparkles className="h-4 w-4" /> {jobSubmitting ? "Starting job…" : "Analyzing Policy…"}
                   </span>
                 ) : (
                   <span className="flex items-center gap-2">
@@ -668,11 +734,17 @@ export default function CompliancePage() {
               </button>
               {isAnyLoading && !isSelectedLoading && (
                 <p className="text-xs text-slate-500 mt-2 text-center animate-pulse">
+                  {jobSubmitting && `Starting ${pendingJobEngine || "compliance"} job…`}
                   {gapLoading && "Running gap analysis…"}
                   {healthLoading && "Running health score…"}
                   {multiLoading && "Running multi-jurisdictional…"}
                   {policyStatuteLoading && "Running policy-statute…"}
                 </p>
+              )}
+              {jobSubmitError && (
+                <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                  {jobSubmitError}
+                </div>
               )}
             </div>
           </div>

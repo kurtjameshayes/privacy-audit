@@ -4,6 +4,7 @@ import io
 from datetime import datetime, timezone
 import json
 import os
+import threading
 import uuid
 from typing import Any, Tuple
 
@@ -60,6 +61,7 @@ STATUTE_COLLECTION = os.getenv("STATUTE_COLLECTION") or "statutes"
 POLICY_CHUNK_COLLECTION = os.getenv("POLICY_CHUNK_COLLECTION") or "policy_chunks"
 STATUTE_CHUNK_COLLECTION = os.getenv("STATUTE_CHUNK_COLLECTION") or "statute_chunks"
 COMPLIANCE_RESULTS_COLLECTION = "compliance_results"
+CONFLICT_RESULTS_COLLECTION = "conflict_results"
 COMPLIANCE_ALERTS_COLLECTION = "compliance_alerts"
 COMPLIANCE_RUN_LOG_COLLECTION = "compliance_run_log"
 COMPLIANCE_JOBS_COLLECTION = "compliance_jobs"
@@ -82,7 +84,7 @@ def api_headers() -> dict[str, str]:
     return headers
 
 
-def forward_post(endpoint: str, payload: dict[str, Any]) -> Tuple[Any, Tuple[str, int] | None]:
+def forward_post(endpoint: str, payload: dict[str, Any], timeout: int = 60) -> Tuple[Any, Tuple[str, int] | None]:
     if not API_BASE_URL:
         return None, ("GATHER_API_BASE_URL is not set.", 500)
     if not FIRECRAWL_API_KEY:
@@ -90,7 +92,7 @@ def forward_post(endpoint: str, payload: dict[str, Any]) -> Tuple[Any, Tuple[str
 
     url = f"{API_BASE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
     try:
-        response = requests.post(url, json=payload, headers=api_headers(), timeout=60)
+        response = requests.post(url, json=payload, headers=api_headers(), timeout=timeout)
     except requests.RequestException as exc:
         return None, ("Upstream service unavailable. Check that the service at GATHER_API_BASE_URL is running.", 502)
 
@@ -982,6 +984,272 @@ def _workflow_collection() -> str:
     return config.get("workflow_state_collection", "document_workflow_state")
 
 
+def _upsert_compliance_job(job_doc: dict[str, Any]) -> None:
+    """Upsert a compliance job in COMPLIANCE_JOBS_COLLECTION by job_id."""
+    job_id = str(job_doc.get("job_id", "")).strip()
+    if not job_id:
+        return
+    forward_delete(
+        "/documents",
+        {
+            "database_name": POLICY_DATABASE,
+            "collection_name": COMPLIANCE_JOBS_COLLECTION,
+            "query": json.dumps({"job_id": job_id}),
+        },
+    )
+    _write_compliance_document(COMPLIANCE_JOBS_COLLECTION, job_doc)
+
+
+def _persist_conflict_results(
+    result: dict[str, Any],
+    run_id: str,
+    model_version: str,
+) -> None:
+    """Persist multi-jurisdictional conflicts to conflict_results."""
+    created_at = datetime.now(timezone.utc).isoformat()
+    for conflict in result.get("conflicts_between_jurisdictions", []) or []:
+        if not isinstance(conflict, dict):
+            continue
+        conflict_doc = {
+            "conflict_id": conflict.get("conflict_id"),
+            "category": conflict.get("category"),
+            "jurisdiction_a": conflict.get("jurisdiction_a"),
+            "jurisdiction_b": conflict.get("jurisdiction_b"),
+            "requirement_a": conflict.get("requirement_a"),
+            "requirement_b": conflict.get("requirement_b"),
+            "conflict_type": conflict.get("conflict_type"),
+            "description": conflict.get("description"),
+            "severity": conflict.get("severity"),
+            "resolution_strategy": conflict.get("resolution_strategy"),
+            "validation": conflict.get("validation", {}),
+            "statute_a_id": conflict.get("statute_a_id"),
+            "statute_b_id": conflict.get("statute_b_id"),
+            "run_id": run_id,
+            "created_at": created_at,
+            "model_version": model_version,
+        }
+        _write_compliance_document(CONFLICT_RESULTS_COLLECTION, conflict_doc)
+
+
+def _run_compliance_job_in_background(
+    job_id: str,
+    job_type: str,
+    job_request: dict[str, Any],
+) -> None:
+    """Execute compliance job async and update job status/result."""
+    now = datetime.now(timezone.utc).isoformat()
+    config = load_compliance_config()
+    index_db = job_request.get("index_database_name") or config.get("index_database_name")
+    index_coll = job_request.get("index_collection_name") or config.get("index_collection_name")
+    result: dict[str, Any] | None = None
+    try:
+        policy_document_id = str(job_request.get("policy_document_id", "")).strip()
+        jurisdictions = job_request.get("applicable_jurisdictions")
+        if isinstance(jurisdictions, list):
+            jurisdictions = [str(j) for j in jurisdictions if str(j).strip()]
+        else:
+            jurisdictions = None
+
+        if job_type == "gap_analysis":
+            num_rows = job_request.get("num_rows")
+            if num_rows is not None:
+                try:
+                    num_rows = int(num_rows)
+                except (TypeError, ValueError):
+                    num_rows = None
+            result = run_gap_analysis(
+                forward_post,
+                forward_get,
+                POLICY_DATABASE,
+                POLICY_COLLECTION,
+                POLICY_CHUNK_COLLECTION,
+                STATUTE_COLLECTION,
+                STATUTE_CHUNK_COLLECTION,
+                policy_document_id,
+                applicable_jurisdictions=jurisdictions,
+                config=config,
+                index_database_name=index_db,
+                index_collection_name=index_coll,
+                save_results=True,
+                num_rows=num_rows,
+            )
+        elif job_type == "health_score":
+            result = run_health_score(
+                forward_post,
+                forward_get,
+                POLICY_DATABASE,
+                POLICY_COLLECTION,
+                POLICY_CHUNK_COLLECTION,
+                STATUTE_COLLECTION,
+                STATUTE_CHUNK_COLLECTION,
+                policy_document_id,
+                applicable_jurisdictions=jurisdictions,
+                gap_result=None,
+                config=config,
+                index_database_name=index_db,
+                index_collection_name=index_coll,
+                weights=None,
+            )
+            doc = {**result, "run_at": datetime.now(timezone.utc).isoformat()}
+            doc["job_type"] = "health_score"
+            doc["run_types"] = doc.get("run_types") or ["health_score"]
+            if "error" in result:
+                doc["compliance_error"] = result["error"]
+            if "message" in result:
+                doc["compliance_message"] = result["message"]
+            _write_compliance_document(COMPLIANCE_RESULTS_COLLECTION, doc)
+        elif job_type == "multi_jurisdictional":
+            result = run_multi_jurisdictional(
+                forward_post,
+                forward_get,
+                POLICY_DATABASE,
+                STATUTE_COLLECTION,
+                STATUTE_CHUNK_COLLECTION,
+                jurisdictions or [],
+                policy_document_id=policy_document_id or None,
+                policy_collection=POLICY_COLLECTION,
+                policy_chunk_collection=POLICY_CHUNK_COLLECTION,
+                config=config,
+                index_database_name=index_db,
+                index_collection_name=index_coll,
+            )
+            model_version = str(job_request.get("model_version", "")).strip() or os.getenv("MODEL_VERSION", "unknown")
+            _persist_conflict_results(result, run_id=job_id, model_version=model_version)
+        elif job_type == "policy_statute":
+            jurisdiction = str(job_request.get("jurisdiction", "")).strip()
+            policy_collection = str(job_request.get("policy_collection", "")).strip() or POLICY_LEGAL_EMBEDDINGS_COLLECTION
+            upstream_result, upstream_error = forward_post(
+                "/api/compliance/policy-statute-compliance",
+                {
+                    "policy_id": policy_document_id,
+                    "policy_collection": policy_collection,
+                    "jurisdiction": jurisdiction,
+                },
+            )
+            if upstream_error:
+                msg, _ = upstream_error
+                raise RuntimeError(str(msg))
+            result = dict(upstream_result) if isinstance(upstream_result, dict) else {"raw": upstream_result}
+        else:
+            raise ValueError(f"unsupported_job_type:{job_type}")
+
+        completed = datetime.now(timezone.utc).isoformat()
+        _upsert_compliance_job(
+            {
+                "job_id": job_id,
+                "job_type": job_type,
+                "status": "completed",
+                "created_at": now,
+                "completed_at": completed,
+                "request": job_request,
+                "result": result,
+            }
+        )
+    except Exception as exc:
+        completed = datetime.now(timezone.utc).isoformat()
+        _upsert_compliance_job(
+            {
+                "job_id": job_id,
+                "job_type": job_type,
+                "status": "failed",
+                "created_at": now,
+                "completed_at": completed,
+                "request": job_request,
+                "error": str(exc),
+            }
+        )
+
+
+@app.route("/api/compliance/jobs", methods=["POST"])
+def compliance_create_job() -> Any:
+    """Create and start a background compliance job."""
+    payload = request.get_json(silent=True) or {}
+    job_type = str(payload.get("job_type", "")).strip()
+    policy_document_id = str(payload.get("policy_document_id", "")).strip()
+    if not job_type:
+        return jsonify({"error": "job_type is required."}), 400
+    if not policy_document_id:
+        return jsonify({"error": "policy_document_id is required."}), 400
+
+    if job_type not in ("gap_analysis", "health_score", "multi_jurisdictional", "policy_statute"):
+        return jsonify({"error": "Unsupported job_type."}), 400
+
+    guard_err = assert_policy_ready_for_compliance(
+        forward_get, POLICY_DATABASE, policy_document_id, _workflow_collection()
+    )
+    if guard_err:
+        return jsonify(guard_err), 409
+
+    applicable_jurisdictions = payload.get("applicable_jurisdictions")
+    if isinstance(applicable_jurisdictions, list):
+        applicable_jurisdictions = [str(j) for j in applicable_jurisdictions]
+    else:
+        applicable_jurisdictions = None
+
+    if job_type == "multi_jurisdictional":
+        if not applicable_jurisdictions:
+            return jsonify({"error": "applicable_jurisdictions (array) is required."}), 400
+
+    if job_type in ("gap_analysis", "health_score", "multi_jurisdictional"):
+        config = load_compliance_config()
+        index_db = payload.get("index_database_name") or config.get("index_database_name")
+        index_coll = payload.get("index_collection_name") or config.get("index_collection_name")
+        jurisdictions = applicable_jurisdictions or config.get("default_jurisdictions", ["CA", "VA"])
+        statute_guard = assert_statute_indexed_for_jurisdiction(
+            forward_get,
+            forward_post,
+            POLICY_DATABASE,
+            STATUTE_COLLECTION,
+            STATUTE_CHUNK_COLLECTION,
+            jurisdictions,
+            index_db,
+            index_coll,
+            _workflow_collection(),
+            use_vector_search=config.get("use_vector_search", False),
+        )
+        if statute_guard:
+            return jsonify(statute_guard), 409
+
+    if job_type == "policy_statute" and not str(payload.get("jurisdiction", "")).strip():
+        return jsonify({"error": "jurisdiction is required for policy_statute jobs."}), 400
+
+    job_id = str(uuid.uuid4())
+    job_request: dict[str, Any] = {
+        "policy_document_id": policy_document_id,
+    }
+    if applicable_jurisdictions:
+        job_request["applicable_jurisdictions"] = applicable_jurisdictions
+    if payload.get("index_database_name"):
+        job_request["index_database_name"] = payload.get("index_database_name")
+    if payload.get("index_collection_name"):
+        job_request["index_collection_name"] = payload.get("index_collection_name")
+    if payload.get("model_version"):
+        job_request["model_version"] = payload.get("model_version")
+    if job_type == "gap_analysis" and payload.get("num_rows") is not None:
+        job_request["num_rows"] = payload.get("num_rows")
+    if job_type == "policy_statute":
+        job_request["jurisdiction"] = str(payload.get("jurisdiction", "")).strip()
+        job_request["policy_collection"] = str(payload.get("policy_collection", "")).strip() or POLICY_LEGAL_EMBEDDINGS_COLLECTION
+
+    now = datetime.now(timezone.utc).isoformat()
+    _upsert_compliance_job(
+        {
+            "job_id": job_id,
+            "job_type": job_type,
+            "status": "pending",
+            "created_at": now,
+            "completed_at": None,
+            "request": job_request,
+        }
+    )
+    threading.Thread(
+        target=_run_compliance_job_in_background,
+        args=(job_id, job_type, job_request),
+        daemon=True,
+    ).start()
+    return jsonify({"job_id": job_id, "status": "pending", "message": "Compliance job started."}), 202
+
+
 @app.route("/api/compliance/policy-statute-compliance", methods=["POST"])
 def compliance_policy_statute_compliance() -> Any:
     """Proxy policy-statute compliance to the upstream Web Gather API."""
@@ -1083,6 +1351,33 @@ def compliance_risk_assessment() -> Any:
         "include_report": payload.get("include_report", False),
     }
     data, error = forward_post("/api/compliance/risk-assessment", body)
+    if error:
+        message, status = error
+        return jsonify({"error": message}), status
+    return jsonify(data)
+
+
+@app.route("/api/compliance/consumer-rights-router", methods=["POST"])
+def compliance_consumer_rights_router() -> Any:
+    """Proxy consumer rights request router to upstream. Generates decision trees and policy gap analysis."""
+    payload = request.get_json(silent=True) or {}
+    policy_document_id = str(payload.get("policy_document_id", "")).strip()
+    if not policy_document_id:
+        return jsonify({"error": "policy_document_id is required."}), 400
+    guard_err = assert_policy_ready_for_compliance(
+        forward_get, POLICY_DATABASE, policy_document_id, _workflow_collection()
+    )
+    if guard_err:
+        return jsonify(guard_err), 409
+    body: dict[str, Any] = {
+        "policy_document_id": policy_document_id,
+    }
+    applicable_jurisdictions = payload.get("applicable_jurisdictions")
+    if isinstance(applicable_jurisdictions, list):
+        body["applicable_jurisdictions"] = [str(j) for j in applicable_jurisdictions]
+    if payload.get("request_types"):
+        body["request_types"] = payload["request_types"]
+    data, error = forward_post("/api/compliance/consumer-rights-router", body, timeout=300)
     if error:
         message, status = error
         return jsonify({"error": message}), status
@@ -1648,6 +1943,9 @@ def compliance_multi_jurisdictional() -> Any:
         return jsonify({"error": "applicable_jurisdictions (array) is required."}), 400
     applicable_jurisdictions = [str(j) for j in applicable_jurisdictions]
     policy_document_id = str(payload.get("policy_document_id", "")).strip() or None
+    save_results = bool(payload.get("save_results", True))
+    run_id = str(payload.get("run_id", "")).strip() or str(uuid.uuid4())
+    model_version = str(payload.get("model_version", "")).strip() or os.getenv("MODEL_VERSION", "unknown")
     config = load_compliance_config()
     index_db = payload.get("index_database_name") or config.get("index_database_name")
     index_coll = payload.get("index_collection_name") or config.get("index_collection_name")
@@ -1685,6 +1983,8 @@ def compliance_multi_jurisdictional() -> Any:
         index_database_name=index_db,
         index_collection_name=index_coll,
     )
+    if save_results:
+        _persist_conflict_results(result, run_id=run_id, model_version=model_version)
     return jsonify(result)
 
 

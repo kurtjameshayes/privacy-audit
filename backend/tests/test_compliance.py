@@ -303,6 +303,184 @@ def test_compliance_multi_jurisdictional_returns_spec_shape(monkeypatch: Any) ->
     assert data["applicable_jurisdictions"] == ["CA", "VA"]
 
 
+def test_compliance_multi_jurisdictional_detects_and_saves_conflicts(monkeypatch: Any) -> None:
+    written: list[dict[str, Any]] = []
+
+    def fake_config() -> dict[str, Any]:
+        return {
+            "default_jurisdictions": ["CA", "VA"],
+            "canonical_requirement_ids": ["right_to_delete"],
+            "disclosure_query_categories": ["right to delete"],
+            "use_vector_search": False,
+        }
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        collection = str(params.get("collection_name", ""))
+        raw_query = params.get("query")
+        query: dict[str, Any] = {}
+        if isinstance(raw_query, str):
+            try:
+                import json as _json
+                query = _json.loads(raw_query)
+            except Exception:
+                query = {}
+        elif isinstance(raw_query, dict):
+            query = raw_query
+
+        if collection == "statutes":
+            j = query.get("jurisdiction")
+            if j == "CA":
+                return {"documents": [{"_id": "stat-ca-1", "document_id": "stat-ca-1", "jurisdiction": "CA"}]}, None
+            if j == "VA":
+                return {"documents": [{"_id": "stat-va-1", "document_id": "stat-va-1", "jurisdiction": "VA"}]}, None
+            return {"documents": []}, None
+        if collection == "statute_chunks":
+            doc_id = query.get("document_id")
+            if doc_id == "stat-ca-1":
+                return {
+                    "documents": [
+                        {
+                            "document_id": "stat-ca-1",
+                            "jurisdiction": "CA",
+                            "category": "right to delete",
+                            "chunk_text": "Controller must preserve deletion request logs for 24 months.",
+                        }
+                    ]
+                }, None
+            if doc_id == "stat-va-1":
+                return {
+                    "documents": [
+                        {
+                            "document_id": "stat-va-1",
+                            "jurisdiction": "VA",
+                            "category": "right to delete",
+                            "chunk_text": "Delete all personal data and related request evidence within 30 days.",
+                        }
+                    ]
+                }, None
+            return {"documents": []}, None
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
+        if endpoint == "/parse-llm":
+            prompt = str(payload.get("prompt", ""))
+            if "Return ONLY the JSON array. No preamble." in prompt:
+                return {
+                    "chunks": [
+                        {
+                            "parsed_text": (
+                                '[{"conflict_id":"right_to_delete_CA_VA_1","category":"right to delete",'
+                                '"jurisdiction_a":"CA","jurisdiction_b":"VA",'
+                                '"requirement_a":"Preserve logs for 24 months.",'
+                                '"requirement_b":"Delete related request evidence within 30 days.",'
+                                '"conflict_type":"RETENTION_VS_DELETION",'
+                                '"description":"One law requires retaining request evidence while the other requires deleting it quickly.",'
+                                '"severity":"HIGH","resolution_strategy":"Use jurisdiction-specific retention controls and legal hold mapping."}]'
+                            )
+                        }
+                    ]
+                }, None
+            if "senior privacy law reviewer" in prompt:
+                return {
+                    "chunks": [
+                        {
+                            "parsed_text": (
+                                '{"conflict_id":"right_to_delete_CA_VA_1","verdict":"CONFIRMED",'
+                                '"reasoning":"The two obligations impose incompatible retention outcomes for the same evidence class.",'
+                                '"revised_severity":"HIGH","revised_resolution_strategy":"Apply segmented storage and jurisdiction flags."}'
+                            )
+                        }
+                    ]
+                }, None
+            return {"chunks": [{"parsed_text": "[]"}]}, None
+        if endpoint == "/write_to_collection":
+            written.append(payload)
+            return {"ok": True}, None
+        return {"ok": True}, None
+
+    monkeypatch.setattr(app_module, "load_compliance_config", fake_config)
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    client = app_module.app.test_client()
+
+    response = client.post(
+        "/api/compliance/multi-jurisdictional",
+        json={"applicable_jurisdictions": ["CA", "VA"], "save_results": True, "run_id": "run-1"},
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    conflicts = data.get("conflicts_between_jurisdictions", [])
+    assert isinstance(conflicts, list)
+    assert len(conflicts) == 1
+    assert conflicts[0]["conflict_type"] == "RETENTION_VS_DELETION"
+    assert conflicts[0]["validation"]["verdict"] == "CONFIRMED"
+
+    conflict_writes = [
+        w for w in written
+        if w.get("collection_name") == "conflict_results"
+    ]
+    assert len(conflict_writes) == 1
+    written_doc = conflict_writes[0]["document"]
+    assert written_doc["run_id"] == "run-1"
+    assert written_doc["statute_a_id"] == "stat-ca-1"
+    assert written_doc["statute_b_id"] == "stat-va-1"
+
+
+def test_compliance_jobs_starts_background_job_and_returns_job_id(monkeypatch: Any) -> None:
+    started: list[bool] = []
+
+    ready_workflow = {
+        "document_id": "doc-1",
+        "document_type": "policy",
+        "steps": {
+            "gathered": {"completed": True},
+            "parsed": {"completed": True},
+            "vector_indexed": {"completed": True},
+        },
+        "ready_for_compliance": True,
+    }
+
+    def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
+        if "document_workflow_state" in str(params.get("collection_name", "")):
+            return {"documents": [ready_workflow]}, None
+        return {"documents": []}, None
+
+    def fake_forward_post(endpoint: str, payload: dict[str, Any], timeout: int = 60) -> Any:
+        if endpoint == "/write_to_collection":
+            return {"ok": True}, None
+        return {"ok": True}, None
+
+    class FakeThread:
+        def __init__(self, target: Any, args: tuple[Any, ...], daemon: bool) -> None:
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            started.append(True)
+
+    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(app_module.threading, "Thread", FakeThread)
+
+    client = app_module.app.test_client()
+    response = client.post(
+        "/api/compliance/jobs",
+        json={
+            "job_type": "policy_statute",
+            "policy_document_id": "doc-1",
+            "jurisdiction": "CA",
+        },
+    )
+
+    assert response.status_code == 202
+    data = response.get_json()
+    assert isinstance(data.get("job_id"), str) and len(data["job_id"]) > 0
+    assert data.get("status") == "pending"
+    assert started == [True]
+
+
 def test_compliance_health_score_requires_policy_document_id() -> None:
     client = app_module.app.test_client()
     response = client.post("/api/compliance/health-score", json={})
