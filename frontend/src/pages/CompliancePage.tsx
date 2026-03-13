@@ -1466,7 +1466,6 @@ function JobStartedToast({
   return (
     <div className="fixed top-6 right-6 z-50 animate-in fade-in slide-in-from-top-2 duration-300">
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-4 pr-10 min-w-[340px] relative overflow-hidden">
-        <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-500 animate-shrink-x origin-left" />
         <button
           type="button"
           onClick={onDismiss}

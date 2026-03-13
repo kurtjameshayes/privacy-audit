@@ -44,7 +44,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   gap_analysis: "Gap Analysis",
   health_score: "Health Score",
   gap_v3: "Gap v3",
-  gap_v4: "Gap v4",
+  gap_v4: "Gap Analysis",
   regulatory_drift: "Regulatory Drift",
   applicability: "Applicability",
   multi_jurisdictional: "Multi-Jurisdictional",
@@ -601,10 +601,10 @@ export default function RunsPage() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex flex-col">
                           <span className="text-sm font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
-                            {run.policy_document_id ?? "—"}
+                            {run.company_name ?? "—"}
                           </span>
                           <span className="text-xs text-slate-500 mt-1 font-medium">
-                            {run.company_name ?? "—"} &bull;{" "}
+                            {run.policy_document_id ?? "—"} &bull;{" "}
                             <span className="font-mono">
                               {displayId ? String(displayId).slice(0, 10) + "…" : "—"}
                             </span>
