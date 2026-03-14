@@ -9,6 +9,12 @@ export default defineConfig({
       "/api": "http://localhost:5120",
     },
   },
+  preview: {
+    port: 4173,
+    proxy: {
+      "/api": "http://localhost:5120",
+    },
+  },
   build: {
     outDir: "dist",
   },
