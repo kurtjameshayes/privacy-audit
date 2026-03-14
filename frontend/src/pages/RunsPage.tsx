@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import { apiGet, apiPost } from "../api/client";
+import { formatReportContent } from "../utils/formatReportContent";
 import { GapAnalysisResult } from "../components/GapAnalysisView";
 import { InfoIcon, Tooltip } from "../components/Tooltip";
 import type {
@@ -888,7 +890,9 @@ export default function RunsPage() {
 
                       {scoreAssessmentResult.reportText && (
                         <div className="prose prose-sm max-w-none bg-slate-50 p-4 rounded-lg border border-slate-200">
-                          <ReactMarkdown>{scoreAssessmentResult.reportText}</ReactMarkdown>
+                          <ReactMarkdown remarkPlugins={[remarkBreaks]}>
+                            {formatReportContent(scoreAssessmentResult.reportText)}
+                          </ReactMarkdown>
                         </div>
                       )}
 

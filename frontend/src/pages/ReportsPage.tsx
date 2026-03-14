@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import { normalizeApiError } from "../api/client";
+import { formatReportContent } from "../utils/formatReportContent";
 import { useDocuments, extractDocumentId } from "../hooks/useDocuments";
 import type { DocumentRecord } from "../types/api";
 import { InfoIcon } from "../components/Tooltip";
@@ -18,6 +20,7 @@ export default function ReportsPage() {
   const location = useLocation();
   const policyFromState = (location.state as { policy?: DocumentRecord })?.policy;
   const previewRef = useRef<HTMLDivElement>(null);
+  const reportContentRef = useRef<HTMLDivElement>(null);
 
   const { documents } = useDocuments("policy");
 
@@ -69,7 +72,7 @@ export default function ReportsPage() {
     try {
       const body: Record<string, unknown> = {
         policy_document_id: policyId,
-        format,
+        format: "markdown",
         source,
         include_gap: includeGap,
         include_health_score: includeHealthScore,
@@ -104,15 +107,35 @@ export default function ReportsPage() {
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!content) return;
-    const blob = new Blob([content], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `compliance-report-${policyId}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+    if (format === "pdf") {
+      const element = reportContentRef.current;
+      if (!element) return;
+      try {
+        const { default: html2pdf } = await import("html2pdf.js");
+        await html2pdf()
+          .set({
+            margin: 12,
+            filename: `compliance-report-${policyId}.pdf`,
+            image: { type: "jpeg", quality: 0.98 },
+            html2canvas: { scale: 2 },
+            jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          })
+          .from(element)
+          .save();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to generate PDF.");
+      }
+    } else {
+      const blob = new Blob([content], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `compliance-report-${policyId}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handlePreview = () => {
@@ -332,10 +355,10 @@ export default function ReportsPage() {
           {content && (
             <button
               type="button"
-              onClick={handleDownload}
+              onClick={() => void handleDownload()}
               className="flex justify-center items-center gap-2 bg-white border border-slate-300 text-slate-700 rounded-lg px-5 py-3 text-sm font-semibold hover:bg-slate-50 transition-colors shadow-sm"
             >
-              <Download className="h-4 w-4" /> Download .md
+              <Download className="h-4 w-4" /> Download {format === "pdf" ? ".pdf" : ".md"}
             </button>
           )}
         </div>
@@ -351,14 +374,19 @@ export default function ReportsPage() {
             </h2>
             <button
               type="button"
-              onClick={handleDownload}
+              onClick={() => void handleDownload()}
               className="flex items-center gap-2 text-sm font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors"
             >
-              <Download className="h-4 w-4" /> Download
+              <Download className="h-4 w-4" /> Download {format === "pdf" ? ".pdf" : ".md"}
             </button>
           </div>
-          <div className="p-6 prose prose-sm prose-slate max-w-none">
-            <ReactMarkdown>{content}</ReactMarkdown>
+          <div
+            ref={reportContentRef}
+            className="p-6 prose prose-sm prose-slate max-w-none reports-preview-markdown"
+          >
+            <ReactMarkdown remarkPlugins={[remarkBreaks]}>
+              {formatReportContent(content)}
+            </ReactMarkdown>
           </div>
         </div>
       )}
