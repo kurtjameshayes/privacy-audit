@@ -965,9 +965,93 @@ input[type="datetime-local"]:focus {
 }
 
 .parse-section-meta {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 12px;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.parse-section-meta-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.parse-section-summary {
+  color: var(--slate-light);
+  font-weight: 600;
+}
+
+.parse-category-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.parse-category-label {
+  color: var(--slate-light);
+}
+
+.parse-category-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: lowercase;
+}
+
+.parse-category-badge--data {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.parse-category-badge--rights {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.parse-category-badge--security {
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+  color: #5b21b6;
+}
+
+.parse-category-badge--sharing {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #9a3412;
+}
+
+.parse-category-badge--cookie {
+  background: #fefce8;
+  border-color: #fde68a;
+  color: #854d0e;
+}
+
+.parse-category-badge--contact {
+  background: #ecfeff;
+  border-color: #a5f3fc;
+  color: #155e75;
+}
+
+.parse-category-badge--retention {
+  background: #fdf2f8;
+  border-color: #fbcfe8;
+  color: #9d174d;
+}
+
+.parse-category-badge--other,
+.parse-category-badge--default {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #334155;
 }
 
 .parse-section-header p {

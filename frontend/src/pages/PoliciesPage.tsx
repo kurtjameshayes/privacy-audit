@@ -527,14 +527,23 @@ function StatusBadge({
 }: {
   workflowState: WorkflowState | null;
 }) {
+  const isReady = workflowState?.ready_for_compliance ?? false;
   const isIndexed = workflowState?.steps?.vector_indexed?.completed;
   const isParsed = workflowState?.steps?.parsed?.completed;
 
-  if (isIndexed) {
+  if (isReady) {
     return (
       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">
         <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
-        Indexed
+        Ready
+      </span>
+    );
+  }
+  if (isIndexed) {
+    return (
+      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">
+        <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />
+        Indexed (incomplete)
       </span>
     );
   }

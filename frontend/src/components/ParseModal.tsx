@@ -115,6 +115,21 @@ function parseChunkDocumentsResponse(data: unknown): ParsedDocItem[] {
 const getParseKey = (item: ParsedDocItem, index: number) =>
   `${item.document_id}-${index}`;
 
+function getCategoryBadgeClass(category: string): string {
+  const value = toDisplayString(category).toLowerCase();
+  if (!value) return "parse-category-badge--default";
+  if (value.includes("collection") || value.includes("data")) return "parse-category-badge--data";
+  if (value.includes("right") || value.includes("request")) return "parse-category-badge--rights";
+  if (value.includes("security") || value.includes("protect")) return "parse-category-badge--security";
+  if (value.includes("sharing") || value.includes("disclosure") || value.includes("third")) {
+    return "parse-category-badge--sharing";
+  }
+  if (value.includes("cookie") || value.includes("tracking")) return "parse-category-badge--cookie";
+  if (value.includes("contact") || value.includes("question")) return "parse-category-badge--contact";
+  if (value.includes("retention") || value.includes("storage")) return "parse-category-badge--retention";
+  return "parse-category-badge--other";
+}
+
 const POLICY_CHUNK_COLLECTION = "policy_chunks";
 const STATUTE_CHUNK_COLLECTION = "statute_chunks";
 
@@ -494,11 +509,25 @@ export default function ParseModal({
                         <div className="parse-section-header">
                           <p>{item.parsed_header_text || "Untitled section"}</p>
                           <div className="parse-section-meta">
-                            <span>
-                              Section {idx + 1}
-                              {item.category ? ` · ${item.category}` : ""}
-                              {item.document_id ? ` · Doc ${item.document_id}` : ""}
-                            </span>
+                            <div className="parse-section-meta-primary">
+                              <span className="parse-section-summary">
+                                Section {idx + 1}
+                              </span>
+                              {item.category ? (
+                                <span className="parse-category-wrap">
+                                  <span className="parse-category-label">
+                                    Category
+                                  </span>
+                                  <span
+                                    className={`parse-category-badge ${getCategoryBadgeClass(
+                                      item.category
+                                    )}`}
+                                  >
+                                    {item.category}
+                                  </span>
+                                </span>
+                              ) : null}
+                            </div>
                             <label className="parse-include">
                               <input
                                 type="checkbox"

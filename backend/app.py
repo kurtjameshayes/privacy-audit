@@ -1760,6 +1760,27 @@ def _runs_from_compliance_run_log(
 
     runs = [{k: v for k, v in r.items() if not k.startswith("_")} for r in all_runs]
 
+    # Backfill missing run company_name from policies by policy_document_id.
+    missing_company_policy_ids = {
+        str(r.get("policy_document_id", "")).strip()
+        for r in runs
+        if not r.get("company_name") and str(r.get("policy_document_id", "")).strip()
+    }
+    if missing_company_policy_ids:
+        policy_docs = _fetch_documents(POLICY_COLLECTION)
+        policy_company_by_id: dict[str, str] = {}
+        for doc in policy_docs:
+            doc_id = str(doc.get("document_id") or doc.get("_id") or "").strip()
+            company = str(doc.get("company_name") or "").strip()
+            if doc_id and company:
+                policy_company_by_id[doc_id] = company
+        for r in runs:
+            if r.get("company_name"):
+                continue
+            pid = str(r.get("policy_document_id", "")).strip()
+            if pid and policy_company_by_id.get(pid):
+                r["company_name"] = policy_company_by_id[pid]
+
     if policy_document_id:
         runs = [r for r in runs if (r.get("policy_document_id") or "") == policy_document_id]
     if since:

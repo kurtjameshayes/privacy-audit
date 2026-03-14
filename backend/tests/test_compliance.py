@@ -634,3 +634,34 @@ def test_compliance_drift_check_returns_spec_shape(monkeypatch: Any) -> None:
     assert "policies_checked" in data
     assert "alerts" in data
     assert isinstance(data["alerts"], list)
+
+
+def test_compliance_runs_backfills_company_name_from_policies(monkeypatch: Any) -> None:
+    def fake_fetch_documents(collection: str) -> list[dict[str, Any]]:
+        if collection == app_module.COMPLIANCE_JOBS_COLLECTION:
+            return [
+                {
+                    "_id": "run-1",
+                    "job_id": "run-1",
+                    "job_type": "health_score",
+                    "request": {"policy_document_id": "doc-1"},
+                    "result": {},
+                    "run_at": "2026-03-13T20:00:00Z",
+                    "status": "completed",
+                }
+            ]
+        if collection == app_module.COMPLIANCE_RUN_LOG_COLLECTION:
+            return []
+        if collection == app_module.COMPLIANCE_RESULTS_COLLECTION:
+            return []
+        if collection == app_module.POLICY_COLLECTION:
+            return [{"document_id": "doc-1", "company_name": "Feeders Pet Supply"}]
+        return []
+
+    monkeypatch.setattr(app_module, "_fetch_documents", fake_fetch_documents)
+
+    data = app_module._runs_from_compliance_run_log(limit=50, offset=0)
+
+    assert data["total"] == 1
+    assert data["runs"][0]["policy_document_id"] == "doc-1"
+    assert data["runs"][0]["company_name"] == "Feeders Pet Supply"

@@ -235,7 +235,8 @@ def backfill_workflow_state(
     ):
         docs = _get_documents(forward_get, database_name, list_coll, None)
         for doc in docs:
-            doc_id = str(doc.get("_id") or doc.get("document_id", ""))
+            # Prefer stable business key used across APIs/UI; Mongo _id can differ.
+            doc_id = str(doc.get("document_id") or doc.get("_id") or "")
             if not doc_id:
                 continue
             chunks = _get_documents(
