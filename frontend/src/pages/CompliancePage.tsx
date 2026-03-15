@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet, normalizeApiError } from "../api/client";
+import RiskAssessmentResultView from "../components/RiskAssessmentResultView";
 import { useDocuments, extractDocumentId } from "../hooks/useDocuments";
 import { useWorkflowState, getMissingSteps } from "../hooks/useWorkflowState";
 import type { DocumentRecord, RunSummaryItem, RunsListResponse } from "../types/api";
@@ -40,15 +41,16 @@ const DEFAULT_POLICY_COLLECTION = "policy_legal_embeddings";
 type PageTab = "analysis" | "results";
 type ComplianceFilter = "all" | "compliant" | "non_compliant" | "neither";
 type GapFilter = "all" | "addressed" | "partial" | "ambiguous" | "missing" | "conflict";
-type EngineId = "gap" | "health" | "multi" | "policystatute";
-type ResultTab = "gap" | "health" | "multi" | "policy-statute";
-type ComplianceJobType = "gap_analysis" | "health_score" | "multi_jurisdictional" | "policy_statute";
+type EngineId = "gap" | "health" | "multi" | "policystatute" | "risk";
+type ResultTab = "gap" | "health" | "multi" | "policy-statute" | "risk";
+type ComplianceJobType = "gap_analysis" | "health_score" | "multi_jurisdictional" | "policy_statute" | "risk_assessment";
 
 const ENGINE_LIST: ReadonlyArray<{ id: EngineId; title: string; desc: string }> = [
   { id: "gap", title: "Gap Analysis", desc: "Identifies missing or deficient clauses compared to statutes." },
   { id: "health", title: "Health Score", desc: "Overall scoring based on key compliance pillars." },
   { id: "multi", title: "Multi-Jurisdictional", desc: "Checks cross-compatibility and strictness conflicts." },
   { id: "policystatute", title: "Policy vs Statute", desc: "1-to-1 strict analysis for a single jurisdiction." },
+  { id: "risk", title: "Risk Assessment", desc: "DPIA-style risk assessment with data categories and mitigations." },
 ];
 
 const RESULT_TAB_LABELS: Record<ResultTab, string> = {
@@ -56,6 +58,7 @@ const RESULT_TAB_LABELS: Record<ResultTab, string> = {
   health: "Health Score",
   multi: "Multi-Jurisdictional",
   "policy-statute": "Policy vs Statute",
+  risk: "Risk Assessment",
 };
 
 function truncateAtBoundary(text: string, maxLen: number): string {
@@ -403,6 +406,7 @@ export default function CompliancePage() {
     if (selectedEngine === "health") jobType = "health_score";
     if (selectedEngine === "multi") jobType = "multi_jurisdictional";
     if (selectedEngine === "policystatute") jobType = "policy_statute";
+    if (selectedEngine === "risk") jobType = "risk_assessment";
 
     const payload: Record<string, unknown> = {
       job_type: jobType,
@@ -418,6 +422,10 @@ export default function CompliancePage() {
     if (selectedEngine === "policystatute") {
       payload.jurisdiction = policyStatuteJurisdiction.trim();
       payload.policy_collection = DEFAULT_POLICY_COLLECTION;
+    }
+    if (selectedEngine === "risk") {
+      payload.template_id = "default";
+      payload.include_report = false;
     }
 
     try {
@@ -1077,6 +1085,7 @@ export default function CompliancePage() {
                     )}
                   </>
                 )}
+
               </div>
             </div>
           ) : (
@@ -1104,6 +1113,7 @@ export default function CompliancePage() {
 const RESULTS_TYPE_OPTIONS = [
   { value: "gap_analysis", label: "Gap Analysis" },
   { value: "health_score", label: "Health Score" },
+  { value: "risk_assessment", label: "Risk Assessment" },
   { value: "gap_v4", label: "Gap v4" },
   { value: "regulatory_drift", label: "Regulatory Drift" },
 ] as const;
@@ -1185,6 +1195,15 @@ function ResultsBrowser({
     if (!runDetail) return null;
     const res = (runDetail.result ?? runDetail) as Record<string, unknown>;
     if (res.privacy_health_score != null) return res;
+    return null;
+  }, [runDetail]);
+
+  const riskResult = useMemo(() => {
+    if (!runDetail) return null;
+    const jobType = runDetail.job_type as string | undefined;
+    if (jobType !== "risk_assessment") return null;
+    const res = (runDetail.result ?? runDetail) as Record<string, unknown>;
+    if (res.assessment || res.report) return res;
     return null;
   }, [runDetail]);
 
@@ -1346,6 +1365,8 @@ function ResultsBrowser({
                     expandedGapIndex={expandedGapIndex}
                     onExpandGap={setExpandedGapIndex}
                   />
+                ) : riskResult ? (
+                  <RiskAssessmentResultView result={riskResult} />
                 ) : healthResult ? (
                   <div className="space-y-6">
                     <div className="flex items-end gap-3 pb-5 border-b border-slate-100">

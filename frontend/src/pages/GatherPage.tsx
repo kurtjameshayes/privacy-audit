@@ -107,6 +107,10 @@ export default function GatherPage() {
   const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
   const [directUrl, setDirectUrl] = useState("");
   const [showFileUploadModal, setShowFileUploadModal] = useState(false);
+  const [upstreamStatus, setUpstreamStatus] = useState<{
+    available: boolean;
+    error?: string;
+  } | null>(null);
 
   const trimmedQuery = query.trim();
   const statuteAppendPrompt = "Privacy Statute Law full text";
@@ -127,6 +131,18 @@ export default function GatherPage() {
       .then((r) => (r.ok ? r.json() : null))
       .then((config) => config && setPolicySearchConfig(config))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/upstream-status")
+      .then((r) => (r.ok ? r.json() : { available: false, error: "Check failed" }))
+      .then((data: { available?: boolean; error?: string }) =>
+        setUpstreamStatus({
+          available: data.available ?? false,
+          error: data.error,
+        })
+      )
+      .catch(() => setUpstreamStatus({ available: false, error: "Could not check status" }));
   }, []);
 
   const handleSearch = async () => {
@@ -343,6 +359,25 @@ export default function GatherPage() {
           compliance analysis.
         </p>
       </div>
+
+      {upstreamStatus && (
+        <div
+          className={`mb-6 px-4 py-3 rounded-lg border text-sm ${
+            upstreamStatus.available
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+              : "bg-amber-50 border-amber-200 text-amber-800"
+          }`}
+        >
+          {upstreamStatus.available ? (
+            <span>Upstream service available.</span>
+          ) : (
+            <span>
+              Upstream service unavailable.
+              {upstreamStatus.error ? ` ${upstreamStatus.error}` : ""}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* ─── Left Column: Acquisition Methods ─── */}

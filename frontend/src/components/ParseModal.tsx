@@ -278,9 +278,10 @@ export default function ParseModal({
     }
   };
 
-  const handleSaveParsed = async () => {
+  const handleSaveAndPrepare = async () => {
     if (!doc || !documentId || parseResults.length === 0) {
       setSaveParsedMessage("Run a parse before saving.");
+      setSaveParsedSuccess(false);
       return;
     }
     const selected = parseResults.filter(
@@ -288,11 +289,15 @@ export default function ParseModal({
     );
     if (selected.length === 0) {
       setSaveParsedMessage("Select at least one parsed section to save.");
+      setSaveParsedSuccess(false);
       return;
     }
     setIsSavingParsed(true);
+    setIsIndexing(true);
     setSaveParsedMessage(null);
     setSaveParsedSuccess(null);
+    setIndexMessage(null);
+    setIndexSuccess(null);
     try {
       const res = await fetch("/api/save-parsed", {
         method: "POST",
@@ -330,54 +335,18 @@ export default function ParseModal({
       }
       const data = (await res.json()) as { message?: string };
       setSaveParsedMessage(
-        data.message || "Saved parsed document information. Subsections and vector index created."
+        data.message || "Saved and prepared for compliance. Subsections and vector index created."
       );
       setSaveParsedSuccess(true);
-    } catch (err) {
-      setSaveParsedMessage(
-        normalizeApiError(err) || "Unable to save parsed document."
-      );
-      setSaveParsedSuccess(false);
-    } finally {
-      setIsSavingParsed(false);
-    }
-  };
-
-  const handleIndex = async () => {
-    if (!documentId) return;
-    setIsIndexing(true);
-    setIndexMessage(null);
-    setIndexSuccess(null);
-    try {
-      const res = await fetch("/api/run-subsection-pipeline", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          database_name: "privacy-compliance",
-          document_id: documentId,
-          mode,
-        }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        let errMsg = "Unable to index.";
-        try {
-          const errData = JSON.parse(text) as { error?: string };
-          if (errData?.error) errMsg = errData.error;
-        } catch {
-          if (text) errMsg = text;
-        }
-        throw new Error(errMsg);
-      }
-      const data = (await res.json()) as { message?: string };
-      setIndexMessage(data.message || "Subsections and vector index created.");
       setIndexSuccess(true);
     } catch (err) {
-      setIndexMessage(
-        normalizeApiError(err) || "Unable to run subsection pipeline."
+      setSaveParsedMessage(
+        normalizeApiError(err) || "Unable to save and prepare document."
       );
+      setSaveParsedSuccess(false);
       setIndexSuccess(false);
     } finally {
+      setIsSavingParsed(false);
       setIsIndexing(false);
     }
   };
@@ -389,7 +358,7 @@ export default function ParseModal({
       <div className="modal-card parse-modal">
         <div className="modal-header">
           <div>
-            <p className="modal-title">View document chunks</p>
+            <p className="modal-title">View / Parse</p>
             <p className="modal-url">
               {doc.title || doc.company_name || "Selected document"} · ID{" "}
               {documentId || "Unknown"}
@@ -457,6 +426,9 @@ export default function ParseModal({
                   </>
                 )}
                 <div className="parse-actions">
+                  <span className="parse-actions-hint">
+                    Segmentation prepares the document for systematic review against applicable regulatory requirements.
+                  </span>
                   <button
                     className="primary-button"
                     type="button"
@@ -578,20 +550,19 @@ export default function ParseModal({
             Reset
           </button>
           <button
-            className="ghost-button"
-            type="button"
-            onClick={handleSaveParsed}
-            disabled={isSavingParsed || isIndexing || parseResults.length === 0}
-          >
-            {isSavingParsed ? "Saving…" : "Save parsed"}
-          </button>
-          <button
             className="primary-button"
             type="button"
-            onClick={handleIndex}
-            disabled={isIndexing || !documentId}
+            onClick={handleSaveAndPrepare}
+            disabled={
+              isSavingParsed ||
+              isIndexing ||
+              parseResults.length === 0 ||
+              !documentId
+            }
           >
-            {isIndexing ? "Indexing…" : "Index"}
+            {isSavingParsed || isIndexing
+              ? "Saving and preparing…"
+              : "Save and Prepare for Compliance"}
           </button>
         </div>
         {(saveParsedMessage || indexMessage) ? (

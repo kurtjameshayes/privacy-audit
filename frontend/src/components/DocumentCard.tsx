@@ -156,7 +156,7 @@ export default function DocumentCard({
               className="ghost-button card-action-arrow"
               onClick={() => onViewChunks(doc)}
             >
-              View chunks
+              View / Parse
             </button>
           )}
         </div>

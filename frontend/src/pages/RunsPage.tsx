@@ -4,6 +4,7 @@ import remarkBreaks from "remark-breaks";
 import { apiGet, apiPost } from "../api/client";
 import { formatReportContent } from "../utils/formatReportContent";
 import { GapAnalysisResult } from "../components/GapAnalysisView";
+import RiskAssessmentResultView from "../components/RiskAssessmentResultView";
 import { InfoIcon, Tooltip } from "../components/Tooltip";
 import type {
   RunsListResponse,
@@ -45,11 +46,13 @@ function formatDate(value?: string): string {
 const JOB_TYPE_LABELS: Record<string, string> = {
   gap_analysis: "Gap Analysis",
   health_score: "Health Score",
+  risk_assessment: "Risk Assessment",
   gap_v3: "Gap v3",
   gap_v4: "Gap Analysis",
   regulatory_drift: "Regulatory Drift",
   applicability: "Applicability",
   multi_jurisdictional: "Multi-Jurisdictional",
+  policy_statute: "Policy vs Statute",
 };
 
 function formatJobType(value: string): string {
@@ -192,6 +195,14 @@ export default function RunsPage() {
     () => getScoreAssessmentResult(runDetail as RunDetail | null),
     [runDetail]
   );
+
+  const riskResult = useMemo(() => {
+    const d = runDetail as Record<string, unknown> | null;
+    if (!d || (d.job_type as string) !== "risk_assessment") return null;
+    const res = (d.result ?? d) as Record<string, unknown>;
+    if (res.assessment || res.report) return res;
+    return null;
+  }, [runDetail]);
 
   const runJobType = (runDetail as Record<string, unknown> | null)?.job_type as string | undefined;
 
@@ -654,6 +665,7 @@ export default function RunsPage() {
                           <Tooltip content="View JSON Data">
                             <button
                               type="button"
+                              title="View JSON Data"
                               className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-md transition-colors flex items-center justify-center"
                               onClick={() => openRunDetail(run, "raw")}
                             >
@@ -663,6 +675,7 @@ export default function RunsPage() {
                           <Tooltip content="Re-run Engine">
                             <button
                               type="button"
+                              title="Re-run Engine"
                               className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-md transition-colors flex items-center justify-center"
                               onClick={() => openRunDetail(run)}
                             >
@@ -672,6 +685,7 @@ export default function RunsPage() {
                           <Tooltip content="Delete Run">
                             <button
                               type="button"
+                              title="Delete Run"
                               className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-md transition-colors flex items-center justify-center ml-1"
                               onClick={() => void handleDelete(getRunId(run) ?? undefined)}
                               disabled={deleteLoading}
@@ -800,6 +814,7 @@ export default function RunsPage() {
                 <Tooltip content="Download Report (Markdown)">
                   <button
                     type="button"
+                    title="Download Report (Markdown)"
                     onClick={() => void handleDownloadReport()}
                     disabled={!runDetail || reportLoading}
                     className="text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-md transition-colors disabled:opacity-40"
@@ -810,6 +825,7 @@ export default function RunsPage() {
                 <Tooltip content="Delete Run">
                   <button
                     type="button"
+                    title="Delete Run"
                     onClick={() => void handleDelete()}
                     disabled={!runDetail || deleteLoading || deleteSupported === false}
                     className="text-slate-500 hover:text-red-600 hover:bg-red-50 p-2 rounded-md transition-colors disabled:opacity-40 ml-1"
@@ -875,6 +891,8 @@ export default function RunsPage() {
                         View raw JSON
                       </button>
                     </div>
+                  ) : riskResult ? (
+                    <RiskAssessmentResultView result={riskResult} />
                   ) : gapResult ? (
                     <GapAnalysisResult
                       result={gapResult}
@@ -1059,7 +1077,7 @@ function StatusBadge({ status }: { status?: string }) {
 
   return (
     <span className={`flex items-center gap-1 text-xs font-semibold ${c.color}`}>
-      <Icon className={`h-3 w-3 ${status === "running" ? "animate-spin" : ""}`} />
+      <Icon className={`h-3 w-3 ${status === "running" || status === "pending" ? "animate-spin" : ""}`} />
       {status.charAt(0).toUpperCase() + status.slice(1)}
     </span>
   );

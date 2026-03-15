@@ -93,7 +93,7 @@ def forward_post(endpoint: str, payload: dict[str, Any], timeout: int = 60) -> T
     url = f"{API_BASE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
     try:
         response = requests.post(url, json=payload, headers=api_headers(), timeout=timeout)
-    except requests.RequestException as exc:
+    except requests.RequestException:
         return None, ("Upstream service unavailable. Check that the service at GATHER_API_BASE_URL is running.", 502)
 
     if response.status_code >= 400:
@@ -238,6 +238,25 @@ def _run_subsection_pipeline(
 @app.route("/api/health", methods=["GET"])
 def health() -> Any:
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/upstream-status", methods=["GET"])
+def upstream_status() -> Any:
+    """Check if the Gather API upstream is reachable. Used for status display."""
+    if not API_BASE_URL:
+        return jsonify({"available": False, "error": "GATHER_API_BASE_URL is not set."})
+    if not FIRECRAWL_API_KEY:
+        return jsonify({"available": False, "error": "FIRECRAWL_API_KEY is not set."})
+    base = API_BASE_URL.rstrip("/")
+    last_error: str | None = None
+    for path in ("/health", "/api/health", ""):
+        url = f"{base}{path}" if path else base
+        try:
+            requests.get(url, headers=api_headers(), timeout=10)
+            return jsonify({"available": True})
+        except requests.RequestException as exc:
+            last_error = str(exc) or "Connection failed."
+    return jsonify({"available": False, "error": last_error or "Connection failed."})
 
 
 @app.route("/api/config/privacy-policy-search", methods=["GET"])
@@ -1130,6 +1149,18 @@ def _run_compliance_job_in_background(
                 msg, _ = upstream_error
                 raise RuntimeError(str(msg))
             result = dict(upstream_result) if isinstance(upstream_result, dict) else {"raw": upstream_result}
+        elif job_type == "risk_assessment":
+            body = {
+                "policy_document_id": policy_document_id,
+                "applicable_jurisdictions": jurisdictions,
+                "template_id": str(job_request.get("template_id", "default")).strip() or "default",
+                "include_report": bool(job_request.get("include_report", False)),
+            }
+            upstream_result, upstream_error = forward_post("/api/compliance/risk-assessment", body, timeout=300)
+            if upstream_error:
+                msg, _ = upstream_error
+                raise RuntimeError(str(msg))
+            result = dict(upstream_result) if isinstance(upstream_result, dict) else {"raw": upstream_result}
         else:
             raise ValueError(f"unsupported_job_type:{job_type}")
 
@@ -1171,7 +1202,7 @@ def compliance_create_job() -> Any:
     if not policy_document_id:
         return jsonify({"error": "policy_document_id is required."}), 400
 
-    if job_type not in ("gap_analysis", "health_score", "multi_jurisdictional", "policy_statute"):
+    if job_type not in ("gap_analysis", "health_score", "multi_jurisdictional", "policy_statute", "risk_assessment"):
         return jsonify({"error": "Unsupported job_type."}), 400
 
     guard_err = assert_policy_ready_for_compliance(
@@ -1230,6 +1261,9 @@ def compliance_create_job() -> Any:
     if job_type == "policy_statute":
         job_request["jurisdiction"] = str(payload.get("jurisdiction", "")).strip()
         job_request["policy_collection"] = str(payload.get("policy_collection", "")).strip() or POLICY_LEGAL_EMBEDDINGS_COLLECTION
+    if job_type == "risk_assessment":
+        job_request["template_id"] = str(payload.get("template_id", "default")).strip() or "default"
+        job_request["include_report"] = bool(payload.get("include_report", False))
 
     now = datetime.now(timezone.utc).isoformat()
     _upsert_compliance_job(
@@ -1350,7 +1384,7 @@ def compliance_risk_assessment() -> Any:
         "template_id": payload.get("template_id"),
         "include_report": payload.get("include_report", False),
     }
-    data, error = forward_post("/api/compliance/risk-assessment", body)
+    data, error = forward_post("/api/compliance/risk-assessment", body, timeout=300)
     if error:
         message, status = error
         return jsonify({"error": message}), status
@@ -1454,15 +1488,20 @@ def _infer_job_type(doc: dict[str, Any], default: str) -> str:
 
 def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
     """Transform run detail (job-shaped, health_score, drift_check, or flat gap format) into user-friendly compliance view."""
-    # Job-shaped: has result (compliance_jobs) - either result.gaps or result.privacy_health_score
+    # Job-shaped: has result (compliance_jobs) - either result.gaps, result.privacy_health_score, or result.assessment
     res = doc.get("result")
     if isinstance(res, dict):
         has_gaps = isinstance(res.get("gaps"), list)
         has_health_score = res.get("privacy_health_score") is not None
-        if has_gaps or has_health_score:
+        has_risk_assessment = res.get("assessment") is not None
+        if has_gaps or has_health_score or has_risk_assessment:
             req = doc.get("request") or {}
             pid = req.get("policy_document_id") or res.get("policy_document_id")
-            job_type = _infer_job_type(doc, "health_score" if has_health_score and not has_gaps else "gap_analysis")
+            job_type = doc.get("job_type") or (
+                "risk_assessment" if has_risk_assessment
+                else "health_score" if has_health_score and not has_gaps
+                else "gap_analysis"
+            )
             return {
                 "result": res,
                 "request": req,

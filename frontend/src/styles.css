@@ -915,8 +915,16 @@ input[type="datetime-local"]:focus {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 8px;
+  gap: 16px;
   margin-top: 8px;
+}
+
+.parse-actions-hint {
+  flex: 1;
+  font-size: 13px;
+  color: var(--slate-light);
+  line-height: 1.4;
+  max-width: 420px;
 }
 
 .parse-results {
