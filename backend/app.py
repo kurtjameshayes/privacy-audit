@@ -1161,6 +1161,17 @@ def _run_compliance_job_in_background(
                 msg, _ = upstream_error
                 raise RuntimeError(str(msg))
             result = dict(upstream_result) if isinstance(upstream_result, dict) else {"raw": upstream_result}
+            doc = {
+                "result": result,
+                "policy_document_id": policy_document_id,
+                "company_name": result.get("company_name"),
+                "job_type": "risk_assessment",
+                "run_types": ["risk_assessment"],
+                "run_at": datetime.now(timezone.utc).isoformat(),
+                "job_id": job_id,
+                "analyzed_at": result.get("analyzed_at"),
+            }
+            _write_compliance_document(COMPLIANCE_RESULTS_COLLECTION, doc)
         else:
             raise ValueError(f"unsupported_job_type:{job_type}")
 
@@ -1514,6 +1525,27 @@ def _run_detail_to_compliance_view(doc: dict[str, Any]) -> dict[str, Any]:
                 "completed_at": doc.get("completed_at"),
                 "privacy_health_score": res.get("privacy_health_score"),
             }
+    # Risk assessment format: flat doc with assessment (compliance_results)
+    if doc.get("assessment") is not None and not isinstance(doc.get("result"), dict):
+        job_type = "risk_assessment"
+        result = {
+            "assessment": doc.get("assessment"),
+            "report": doc.get("report"),
+            "policy_document_id": doc.get("policy_document_id"),
+            "company_name": doc.get("company_name"),
+            "analyzed_at": doc.get("analyzed_at", doc.get("run_at")),
+        }
+        return {
+            "result": result,
+            "request": {"policy_document_id": doc.get("policy_document_id")},
+            "policy_document_id": doc.get("policy_document_id"),
+            "run_id": _mongo_id_str(doc.get("_id")) or _mongo_id_str(doc.get("job_id")),
+            "run_at": doc.get("analyzed_at") or doc.get("run_at"),
+            "status": "completed",
+            "job_type": job_type,
+            "created_at": doc.get("created_at"),
+            "completed_at": doc.get("completed_at"),
+        }
     # Health score / score assessment format: flat doc with privacy_health_score, no gaps
     if doc.get("privacy_health_score") is not None and not isinstance(doc.get("gaps"), list):
         job_type = _infer_job_type(doc, "health_score")
@@ -1763,9 +1795,16 @@ def _runs_from_compliance_run_log(
         })
 
     # compliance_results: use run_types from doc (fallback to types)
+    # Skip docs that have job_id matching a run from compliance_jobs (avoid duplicates)
+    jobs_job_ids = {r.get("job_id") or r.get("run_id") for r in all_runs if r.get("job_id") or r.get("run_id")}
     results_docs = _fetch_documents(COMPLIANCE_RESULTS_COLLECTION)
     for doc in results_docs:
-        run_id = _mongo_id_str(doc.get("_id"))
+        doc_job_id = str(doc.get("job_id", "")).strip()
+        if doc_job_id and doc_job_id in jobs_job_ids:
+            continue
+        run_id = doc_job_id or _mongo_id_str(doc.get("_id"))
+        if not run_id:
+            continue
         run_at = _run_timestamp(doc)
         summary = doc.get("summary", {})
         components = doc.get("components", {})
@@ -1775,7 +1814,7 @@ def _runs_from_compliance_run_log(
         type_list = list(doc_types) if doc_types else [job_type]
         all_runs.append({
             "run_id": run_id,
-            "job_id": run_id,
+            "job_id": doc_job_id or run_id,
             "policy_document_id": doc.get("policy_document_id", "") or "",
             "company_name": doc.get("company_name"),
             "run_at": run_at,
@@ -1874,7 +1913,7 @@ def compliance_run_detail(run_id: str) -> Any:
         return jsonify(data if data else {"message": "deleted"}), 200
 
     for collection in (COMPLIANCE_JOBS_COLLECTION, COMPLIANCE_RUN_LOG_COLLECTION, COMPLIANCE_RESULTS_COLLECTION):
-        for query in ({"_id": run_id}, {"_id": {"$oid": run_id}}, None):
+        for query in ({"_id": run_id}, {"_id": {"$oid": run_id}}, {"job_id": run_id}, None):
             params: dict[str, Any] = {
                 "database_name": POLICY_DATABASE,
                 "collection_name": collection,
@@ -1889,7 +1928,10 @@ def compliance_run_detail(run_id: str) -> Any:
                 docs = data.get("documents", data.get("data", data.get("results", [])))
             if isinstance(docs, list) and docs:
                 if query is None:
-                    match = next((d for d in docs if _mongo_id_str(d.get("_id")) == run_id), None)
+                    match = next(
+                        (d for d in docs if _mongo_id_str(d.get("_id")) == run_id or str(d.get("job_id", "")).strip() == run_id),
+                        None,
+                    )
                     if match:
                         return jsonify(_run_detail_to_compliance_view(match))
                 else:
