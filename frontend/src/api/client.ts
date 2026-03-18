@@ -1,7 +1,18 @@
 const BASE = "";
 
+const APP_API_KEY: string =
+  (import.meta as Record<string, Record<string, string>>).env?.VITE_APP_API_KEY ?? "";
+
 const BACKEND_UNREACHABLE =
   "Backend server unreachable. Start the backend with: python backend/app.py (port 5120)";
+
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (APP_API_KEY) {
+    headers["Authorization"] = `Bearer ${APP_API_KEY}`;
+  }
+  return headers;
+}
 
 function isConnectionError(err: unknown): boolean {
   if (err instanceof TypeError) return true;
@@ -66,7 +77,7 @@ export async function apiGet<T>(
   return fetchWithConnectionError<T>(() =>
     fetch(`${BASE}${url.pathname}${url.search}`, {
       method: "GET",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(),
     })
   );
 }
@@ -75,7 +86,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return fetchWithConnectionError<T>(() =>
     fetch(`${BASE}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify(body),
     })
   );
@@ -85,7 +96,7 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return fetchWithConnectionError<T>(() =>
     fetch(`${BASE}${path}`, {
       method: "DELETE",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(),
     })
   );
 }

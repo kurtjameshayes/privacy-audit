@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
+
+from backend.utils import get_documents as _get_documents_shared
 
 logger = logging.getLogger(__name__)
 
@@ -24,19 +27,7 @@ def _get_documents(
     collection_name: str,
     query: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return list of documents from the API."""
-    params: dict[str, Any] = {
-        "database_name": database_name,
-        "collection_name": collection_name,
-    }
-    if query is not None:
-        params["query"] = json.dumps(query)
-    data, error = forward_get("/documents", params)
-    if error:
-        return []
-    if isinstance(data, dict):
-        return data.get("documents", data.get("data", data.get("results", [])))
-    return [] if not isinstance(data, list) else data
+    return _get_documents_shared(forward_get, database_name, collection_name, query)
 
 
 def _build_step_value(completed: bool) -> dict[str, Any]:
@@ -93,23 +84,11 @@ def upsert_workflow_state(
         "ready_for_compliance": ready,
         "updated_at": now,
     }
-    if existing:
-        doc["created_at"] = existing.get("created_at", now)
-        _, err = forward_delete(
-            "/documents",
-            {
-                "database_name": database_name,
-                "collection_name": workflow_collection,
-                "query": json.dumps(
-                    {"document_id": document_id, "document_type": document_type}
-                ),
-            },
-        )
-        if err:
-            return
-    else:
-        doc["created_at"] = now
-    forward_post(
+    upsert_id = str(uuid.uuid4())
+    doc["_upsert_id"] = upsert_id
+    doc["created_at"] = existing.get("created_at", now) if existing else now
+
+    _, write_err = forward_post(
         "/write_to_collection",
         {
             "database_name": database_name,
@@ -118,6 +97,38 @@ def upsert_workflow_state(
             "mode": "append",
         },
     )
+    if write_err:
+        return
+
+    if existing:
+        old_upsert_id = existing.get("_upsert_id")
+        if old_upsert_id:
+            forward_delete(
+                "/documents",
+                {
+                    "database_name": database_name,
+                    "collection_name": workflow_collection,
+                    "query": json.dumps({"_upsert_id": old_upsert_id}),
+                },
+            )
+        else:
+            all_docs = _get_documents(
+                forward_get, database_name, workflow_collection,
+                {"document_id": document_id, "document_type": document_type},
+            )
+            for old_doc in all_docs:
+                if old_doc.get("_upsert_id") != upsert_id:
+                    old_id = old_doc.get("_upsert_id") or old_doc.get("_id")
+                    if old_id:
+                        key = "_upsert_id" if old_doc.get("_upsert_id") else "_id"
+                        forward_delete(
+                            "/documents",
+                            {
+                                "database_name": database_name,
+                                "collection_name": workflow_collection,
+                                "query": json.dumps({key: old_id}),
+                            },
+                        )
 
 
 def _missing_steps(state: dict[str, Any] | None) -> list[str]:
@@ -273,12 +284,13 @@ def backfill_workflow_state(
                         chunks_found = data.get("chunks", data.get("documents", data.get("results", [])))
                         vector_indexed = bool(chunks_found)
                     except Exception:
-                        pass
+                        logger.warning("Backfill vector-search probe failed for doc_id=%s", doc_id, exc_info=True)
                 else:
                     vector_indexed = True
             steps["vector_indexed"] = _build_step_value(vector_indexed)
             ready = all(steps.get(s, {}).get("completed") for s in WORKFLOW_STEPS)
             now = datetime.now(timezone.utc).isoformat()
+            bf_upsert_id = str(uuid.uuid4())
             wf_doc = {
                 "document_id": doc_id,
                 "document_type": doc_type,
@@ -286,19 +298,9 @@ def backfill_workflow_state(
                 "ready_for_compliance": ready,
                 "created_at": (state or {}).get("created_at", now),
                 "updated_at": now,
+                "_upsert_id": bf_upsert_id,
             }
-            if state:
-                forward_delete(
-                    "/documents",
-                    {
-                        "database_name": database_name,
-                        "collection_name": workflow_collection,
-                        "query": json.dumps(
-                            {"document_id": doc_id, "document_type": doc_type}
-                        ),
-                    },
-                )
-            forward_post(
+            _, w_err = forward_post(
                 "/write_to_collection",
                 {
                     "database_name": database_name,
@@ -307,6 +309,35 @@ def backfill_workflow_state(
                     "mode": "append",
                 },
             )
+            if not w_err and state:
+                old_uid = state.get("_upsert_id")
+                if old_uid:
+                    forward_delete(
+                        "/documents",
+                        {
+                            "database_name": database_name,
+                            "collection_name": workflow_collection,
+                            "query": json.dumps({"_upsert_id": old_uid}),
+                        },
+                    )
+                else:
+                    all_wf = _get_documents(
+                        forward_get, database_name, workflow_collection,
+                        {"document_id": doc_id, "document_type": doc_type},
+                    )
+                    for old_wf in all_wf:
+                        if old_wf.get("_upsert_id") != bf_upsert_id:
+                            oid = old_wf.get("_upsert_id") or old_wf.get("_id")
+                            if oid:
+                                key = "_upsert_id" if old_wf.get("_upsert_id") else "_id"
+                                forward_delete(
+                                    "/documents",
+                                    {
+                                        "database_name": database_name,
+                                        "collection_name": workflow_collection,
+                                        "query": json.dumps({key: oid}),
+                                    },
+                                )
             if doc_type == "policy":
                 results["policies"] += 1
             else:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal, Tuple
+from typing import Any, Literal
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -33,6 +33,26 @@ def api_headers() -> dict[str, str]:
     return headers
 
 
+_UPSTREAM_ERROR_MAP: dict[int, str] = {
+    400: "Bad request to upstream service.",
+    401: "Upstream authentication failed.",
+    403: "Upstream authorization denied.",
+    404: "Upstream resource not found.",
+    429: "Upstream rate limit exceeded.",
+    500: "Upstream internal error.",
+    502: "Upstream service unavailable.",
+    503: "Upstream service unavailable.",
+    504: "Upstream request timed out.",
+}
+
+
+def _sanitize_upstream_error(raw: str, status_code: int) -> str:
+    """Return a user-safe error message that hides internal upstream details."""
+    if status_code in _UPSTREAM_ERROR_MAP:
+        return _UPSTREAM_ERROR_MAP[status_code]
+    return f"Upstream error (HTTP {status_code})."
+
+
 def _forward_request(
     method: Literal["GET", "POST", "DELETE"],
     endpoint: str,
@@ -40,7 +60,7 @@ def _forward_request(
     params: dict[str, Any] | None = None,
     payload: dict[str, Any] | None = None,
     timeout: int = 60,
-) -> Tuple[Any, Tuple[str, int] | None]:
+) -> tuple[Any, tuple[str, int] | None]:
     """Send a request to the upstream Web Gather API and return (data, error)."""
     if not API_BASE_URL:
         return None, ("Upstream API is not configured.", 500)
@@ -66,10 +86,12 @@ def _forward_request(
 
     if response.status_code >= 400:
         try:
-            message = response.json().get("error", response.text)
+            raw_message = response.json().get("error", response.text)
         except ValueError:
-            message = response.text
-        return None, (message, response.status_code)
+            raw_message = response.text
+        logger.warning("Upstream %s %s returned %d: %s", method, url, response.status_code, raw_message)
+        safe_message = _sanitize_upstream_error(str(raw_message), response.status_code)
+        return None, (safe_message, response.status_code)
 
     try:
         return response.json(), None
@@ -79,17 +101,17 @@ def _forward_request(
 
 def forward_post(
     endpoint: str, payload: dict[str, Any], timeout: int = 60
-) -> Tuple[Any, Tuple[str, int] | None]:
+) -> tuple[Any, tuple[str, int] | None]:
     return _forward_request("POST", endpoint, payload=payload, timeout=timeout)
 
 
 def forward_get(
     endpoint: str, params: dict[str, Any]
-) -> Tuple[Any, Tuple[str, int] | None]:
+) -> tuple[Any, tuple[str, int] | None]:
     return _forward_request("GET", endpoint, params=params)
 
 
 def forward_delete(
     endpoint: str, params: dict[str, Any]
-) -> Tuple[Any, Tuple[str, int] | None]:
+) -> tuple[Any, tuple[str, int] | None]:
     return _forward_request("DELETE", endpoint, params=params)

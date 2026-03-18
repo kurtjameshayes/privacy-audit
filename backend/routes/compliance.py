@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -25,32 +26,18 @@ from backend.config import (
 )
 from backend.upstream import forward_delete, forward_get, forward_post
 
-try:
-    from backend.compliance.engine import (
-        load_config as load_compliance_config,
-        run_applicability,
-        run_drift_check,
-        run_gap_analysis,
-        run_health_score,
-        run_multi_jurisdictional,
-    )
-    from backend.workflow import (
-        assert_policy_ready_for_compliance,
-        assert_statute_indexed_for_jurisdiction,
-    )
-except ImportError:
-    from compliance.engine import (
-        load_config as load_compliance_config,
-        run_applicability,
-        run_drift_check,
-        run_gap_analysis,
-        run_health_score,
-        run_multi_jurisdictional,
-    )
-    from workflow import (
-        assert_policy_ready_for_compliance,
-        assert_statute_indexed_for_jurisdiction,
-    )
+from backend.compliance.engine import (
+    load_config as load_compliance_config,
+    run_applicability,
+    run_drift_check,
+    run_gap_analysis,
+    run_health_score,
+    run_multi_jurisdictional,
+)
+from backend.workflow import (
+    assert_policy_ready_for_compliance,
+    assert_statute_indexed_for_jurisdiction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +114,9 @@ def _persist_conflict_results(
             "model_version": model_version,
         }
         _write_compliance_document(CONFLICT_RESULTS_COLLECTION, conflict_doc)
+
+
+JOB_TIMEOUT_SECONDS = int(os.getenv("COMPLIANCE_JOB_TIMEOUT", "600"))
 
 
 def _run_compliance_job_in_background(
@@ -271,17 +261,20 @@ def _run_compliance_job_in_background(
     except Exception as exc:
         logger.exception("Compliance job %s failed", job_id)
         completed = datetime.now(timezone.utc).isoformat()
-        _upsert_compliance_job(
-            {
-                "job_id": job_id,
-                "job_type": job_type,
-                "status": "failed",
-                "created_at": now,
-                "completed_at": completed,
-                "request": job_request,
-                "error": str(exc),
-            }
-        )
+        try:
+            _upsert_compliance_job(
+                {
+                    "job_id": job_id,
+                    "job_type": job_type,
+                    "status": "failed",
+                    "created_at": now,
+                    "completed_at": completed,
+                    "request": job_request,
+                    "error": str(exc),
+                }
+            )
+        except Exception:
+            logger.exception("Failed to persist failure status for job %s", job_id)
 
 
 def _infer_job_type(doc: dict[str, Any], default: str) -> str:
@@ -473,12 +466,20 @@ def _mongo_id_str(rid: Any) -> str:
     return str(rid)
 
 
-def _fetch_documents(collection: str) -> list[dict[str, Any]]:
-    """Fetch all documents from a collection via upstream /documents."""
+def _fetch_documents(
+    collection: str,
+    query: dict[str, Any] | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch documents from a collection via upstream /documents, optionally filtered."""
     params: dict[str, Any] = {
         "database_name": POLICY_DATABASE,
         "collection_name": collection,
     }
+    if query:
+        params["query"] = json.dumps(query)
+    if limit is not None:
+        params["limit"] = str(limit)
     data, error = forward_get("/documents", params)
     if error:
         return []
@@ -510,7 +511,11 @@ def _runs_from_compliance_run_log(
     """Fetch runs from compliance_jobs, compliance_run_log, and compliance_results."""
     all_runs: list[dict[str, Any]] = []
 
-    jobs_docs = _fetch_documents(COMPLIANCE_JOBS_COLLECTION)
+    upstream_query: dict[str, Any] = {}
+    if policy_document_id:
+        upstream_query["request.policy_document_id"] = policy_document_id
+
+    jobs_docs = _fetch_documents(COMPLIANCE_JOBS_COLLECTION, upstream_query or None)
     for doc in jobs_docs:
         run_id = _mongo_id_str(doc.get("_id")) or _mongo_id_str(doc.get("job_id"))
         if not run_id:
@@ -550,7 +555,10 @@ def _runs_from_compliance_run_log(
             "_doc": doc,
         })
 
-    run_log_docs = _fetch_documents(COMPLIANCE_RUN_LOG_COLLECTION)
+    log_query: dict[str, Any] = {}
+    if policy_document_id:
+        log_query["policy_document_id"] = policy_document_id
+    run_log_docs = _fetch_documents(COMPLIANCE_RUN_LOG_COLLECTION, log_query or None)
     for doc in run_log_docs:
         run_id = _mongo_id_str(doc.get("_id"))
         analyzed_at = _run_timestamp(doc)
@@ -591,7 +599,10 @@ def _runs_from_compliance_run_log(
         })
 
     jobs_job_ids = {r.get("job_id") or r.get("run_id") for r in all_runs if r.get("job_id") or r.get("run_id")}
-    results_docs = _fetch_documents(COMPLIANCE_RESULTS_COLLECTION)
+    results_query: dict[str, Any] = {}
+    if policy_document_id:
+        results_query["policy_document_id"] = policy_document_id
+    results_docs = _fetch_documents(COMPLIANCE_RESULTS_COLLECTION, results_query or None)
     for doc in results_docs:
         doc_job_id = str(doc.get("job_id", "")).strip()
         if doc_job_id and doc_job_id in jobs_job_ids:
@@ -677,6 +688,31 @@ def _runs_from_compliance_run_log(
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+@bp.route("/api/compliance/jobs/sweep-stale", methods=["POST"])
+def compliance_sweep_stale_jobs() -> Any:
+    """Mark pending/running jobs older than JOB_TIMEOUT_SECONDS as failed."""
+    cutoff = datetime.now(timezone.utc).timestamp() - JOB_TIMEOUT_SECONDS
+    docs = _fetch_documents(COMPLIANCE_JOBS_COLLECTION, {"status": "pending"})
+    swept = 0
+    for doc in docs:
+        created = doc.get("created_at", "")
+        if not created:
+            continue
+        try:
+            ts = datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+        except (ValueError, AttributeError):
+            continue
+        if ts < cutoff:
+            _upsert_compliance_job({
+                **doc,
+                "status": "failed",
+                "error": "Job timed out (stale sweep).",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            })
+            swept += 1
+    return jsonify({"swept": swept})
+
 
 @bp.route("/api/compliance/jobs", methods=["POST"])
 def compliance_create_job() -> Any:
@@ -977,10 +1013,13 @@ def compliance_runs() -> Any:
     return jsonify(data)
 
 
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_OBJECTID_RE = re.compile(r"^[0-9a-fA-F]{24}$")
+
+
 def _is_valid_id(value: str) -> bool:
     """Accept UUID or 24-hex-char MongoDB ObjectId -- reject anything else."""
-    import re
-    return bool(re.fullmatch(r"[0-9a-fA-F-]{24,36}", value))
+    return bool(_UUID_RE.match(value) or _OBJECTID_RE.match(value))
 
 
 @bp.route("/api/compliance/runs/<run_id>", methods=["GET", "DELETE"])

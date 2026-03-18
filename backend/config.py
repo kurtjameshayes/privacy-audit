@@ -15,6 +15,8 @@ API_BASE_URL = os.getenv("GATHER_API_BASE_URL", "").strip()
 FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
 PROXY_URL = os.getenv("PROXY_URL", "").strip()
 
+APP_API_KEY = os.getenv("APP_API_KEY", "").strip()
+
 POLICY_DATABASE = os.getenv("POLICY_DATABASE") or "privacy-compliance"
 POLICY_COLLECTION = os.getenv("POLICY_COLLECTION") or "policies"
 STATUTE_COLLECTION = os.getenv("STATUTE_COLLECTION") or "statutes"

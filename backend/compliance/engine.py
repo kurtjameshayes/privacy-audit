@@ -12,6 +12,8 @@ from itertools import combinations
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from backend.utils import get_documents as _get_documents_shared
+
 # Default config path relative to backend/
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "compliance_config.json")
 CONFLICT_TYPES = {
@@ -60,19 +62,7 @@ def _get_documents(
     collection_name: str,
     query: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return list of documents from the API."""
-    params: dict[str, Any] = {
-        "database_name": database_name,
-        "collection_name": collection_name,
-    }
-    if query is not None:
-        params["query"] = json.dumps(query)
-    data, error = forward_get("/documents", params)
-    if error:
-        return []
-    if isinstance(data, dict):
-        return data.get("documents", data.get("data", data.get("results", [])))
-    return [] if not isinstance(data, list) else data
+    return _get_documents_shared(forward_get, database_name, collection_name, query)
 
 
 def _parse_llm(
@@ -972,6 +962,10 @@ def run_health_score(
         status = g.get("status", "missing")
         if status == "addressed":
             score = 1.0
+        elif status == "partial":
+            score = 0.5
+        elif status == "ambiguous":
+            score = 0.25
         elif status == "conflict":
             score = 0.0
         else:
@@ -1000,6 +994,8 @@ def run_health_score(
         "components": {
             "requirements_total": len(gaps),
             "addressed": sum(1 for g in gaps if g.get("status") == "addressed"),
+            "partial": sum(1 for g in gaps if g.get("status") == "partial"),
+            "ambiguous": sum(1 for g in gaps if g.get("status") == "ambiguous"),
             "missing": sum(1 for g in gaps if g.get("status") == "missing"),
             "conflicts": conflicts,
             "raw_ratio": round(raw_ratio, 2),
