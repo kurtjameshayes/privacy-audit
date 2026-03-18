@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDocuments, extractDocumentId } from "../hooks/useDocuments";
-import { useWorkflowState, getMissingSteps } from "../hooks/useWorkflowState";
+import { useBatchWorkflowStates } from "../hooks/useBatchWorkflowStates";
+import { getMissingSteps } from "../hooks/useWorkflowState";
 import ParseModal from "../components/ParseModal";
 import { InfoIcon } from "../components/Tooltip";
 import type { DocumentRecord, WorkflowState } from "../types/api";
@@ -36,6 +37,12 @@ export default function PoliciesPage() {
 
   const navigate = useNavigate();
   const { documents, loading, error, refetch } = useDocuments(listMode);
+
+  const documentIds = useMemo(
+    () => documents.map((doc) => extractDocumentId(doc)).filter(Boolean),
+    [documents]
+  );
+  const { states: workflowStates } = useBatchWorkflowStates(documentIds, listMode);
 
   const filteredDocuments = useMemo(() => {
     const search = documentSearch.trim().toLowerCase();
@@ -183,17 +190,21 @@ export default function PoliciesPage() {
                   </td>
                 </tr>
               ) : (
-                filteredDocuments.map((doc, index) => (
-                  <DocumentRow
-                    key={`${doc.source_url || doc.title || "doc"}-${index}`}
-                    doc={doc}
-                    mode={listMode}
-                    onRunCompliance={
-                      listMode === "policy" ? handleRunCompliance : undefined
-                    }
-                    onViewChunks={() => setParseTarget(doc)}
-                  />
-                ))
+                filteredDocuments.map((doc, index) => {
+                  const docId = extractDocumentId(doc);
+                  return (
+                    <DocumentRow
+                      key={`${doc.source_url || doc.title || "doc"}-${index}`}
+                      doc={doc}
+                      mode={listMode}
+                      workflowState={docId ? workflowStates[docId] ?? null : null}
+                      onRunCompliance={
+                        listMode === "policy" ? handleRunCompliance : undefined
+                      }
+                      onViewChunks={() => setParseTarget(doc)}
+                    />
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -222,16 +233,17 @@ export default function PoliciesPage() {
 function DocumentRow({
   doc,
   mode,
+  workflowState,
   onRunCompliance,
   onViewChunks,
 }: {
   doc: DocumentRecord;
   mode: "policy" | "statute";
+  workflowState: WorkflowState | null;
   onRunCompliance?: (doc: DocumentRecord) => void;
   onViewChunks?: (doc: DocumentRecord) => void;
 }) {
   const docId = extractDocumentId(doc);
-  const { state: workflowState } = useWorkflowState(docId || null, mode);
   const missingSteps = getMissingSteps(workflowState);
   const readyForCompliance = workflowState?.ready_for_compliance ?? false;
 

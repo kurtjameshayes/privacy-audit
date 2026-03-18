@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import io
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any
-import uuid
+from urllib.parse import urlparse
 
 from flask import Blueprint, jsonify, request
 
@@ -18,12 +19,8 @@ from backend.config import (
 )
 from backend.upstream import forward_get, forward_post, forward_delete
 
-try:
-    from backend.compliance.engine import load_config as load_compliance_config
-    from backend.workflow import upsert_workflow_state
-except ImportError:
-    from compliance.engine import load_config as load_compliance_config  # type: ignore[no-redef]
-    from workflow import upsert_workflow_state  # type: ignore[no-redef]
+from backend.compliance.engine import load_config as load_compliance_config
+from backend.workflow import upsert_workflow_state
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +54,6 @@ def crawl() -> Any:
     if not url:
         return jsonify({"error": "URL is required."}), 400
 
-    from urllib.parse import urlparse
     parsed_url = urlparse(url)
     if parsed_url.scheme not in ("http", "https"):
         return jsonify({"error": "Only http/https URLs are allowed."}), 400

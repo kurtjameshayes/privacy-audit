@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Tuple
+import uuid
+from typing import Any
 
 from flask import Blueprint, jsonify, request
 
@@ -20,21 +21,14 @@ from backend.config import (
     STATUTE_SUB_EMBEDDINGS_COLLECTION,
 )
 from backend.upstream import forward_delete, forward_get, forward_post
+from backend.utils import strip_dollar_keys
 
-try:
-    from backend.compliance.engine import load_config as load_compliance_config
-    from backend.workflow import (
-        backfill_workflow_state,
-        get_workflow_state,
-        upsert_workflow_state,
-    )
-except ImportError:
-    from compliance.engine import load_config as load_compliance_config
-    from workflow import (
-        backfill_workflow_state,
-        get_workflow_state,
-        upsert_workflow_state,
-    )
+from backend.compliance.engine import load_config as load_compliance_config
+from backend.workflow import (
+    backfill_workflow_state,
+    get_workflow_state,
+    upsert_workflow_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +39,7 @@ def _run_subsection_pipeline(
     document_id: str,
     document_type: str,
     database_name: str,
-) -> Tuple[str | None, int | None]:
+) -> tuple[str | None, int | None]:
     """
     Run subsection pipeline: (statute only: create subsections) -> vector-index -> create-vector-index.
     For policies, skip create-policy-subsections and index policy_chunks directly.
@@ -136,10 +130,10 @@ def list_documents() -> Any:
     }
     if query is not None:
         if isinstance(query, dict):
-            query = {k: v for k, v in query.items() if not k.startswith("$")}
+            query = strip_dollar_keys(query)
             params["query"] = json.dumps(query)
         elif isinstance(query, list):
-            params["query"] = json.dumps(query)
+            params["query"] = json.dumps(strip_dollar_keys(query))
         else:
             params["query"] = str(query)
 
@@ -246,8 +240,7 @@ def save_parsed_document() -> Any:
             if isinstance(docs, list) and docs:
                 source_jurisdiction = str(docs[0].get("jurisdiction", "") or "").strip() or None
 
-    import uuid as _uuid
-    staging_id = f"staging-{_uuid.uuid4()}"
+    staging_id = f"staging-{uuid.uuid4()}"
 
     def _single_line(s: str) -> str:
         return " ".join(s.split())
@@ -323,7 +316,7 @@ def save_parsed_document() -> Any:
         if isinstance(rec, dict) and rec.get("document_id") == staging_id:
             rec["document_id"] = document_id
 
-    forward_post(
+    _, update_err = forward_post(
         "/update_documents",
         {
             "database_name": database_name,
@@ -332,6 +325,10 @@ def save_parsed_document() -> Any:
             "update": {"$set": {"document_id": document_id}},
         },
     )
+    if update_err:
+        update_msg, update_status = update_err
+        logger.error("save_parsed: staging promote failed for doc_id=%s: %s", document_id, update_msg)
+        return jsonify({"error": f"Failed to finalize parsed chunks: {update_msg}"}), update_status or 500
 
     saved_records = staged_records
 
@@ -638,3 +635,53 @@ def get_document_workflow_state(document_id: str) -> Any:
             "ready_for_compliance": False,
         })
     return jsonify(state)
+
+
+_DEFAULT_WORKFLOW_STATE = {
+    "gathered": {"completed": False, "completed_at": None},
+    "parsed": {"completed": False, "completed_at": None},
+    "vector_indexed": {"completed": False, "completed_at": None},
+}
+
+
+@bp.route("/api/documents/workflow-states", methods=["POST"])
+def get_batch_workflow_states() -> Any:
+    """Return workflow states for multiple documents in a single call."""
+    payload = request.get_json(silent=True) or {}
+    document_ids = payload.get("document_ids", [])
+    document_type = str(payload.get("document_type", "policy")).strip()
+    if document_type not in ("policy", "statute"):
+        return jsonify({"error": "document_type must be policy or statute"}), 400
+    if not isinstance(document_ids, list) or not document_ids:
+        return jsonify({"error": "document_ids (non-empty array) is required."}), 400
+
+    wf_coll = load_compliance_config().get("workflow_state_collection", "document_workflow_state")
+    params: dict[str, Any] = {
+        "database_name": POLICY_DATABASE,
+        "collection_name": wf_coll,
+        "query": json.dumps({"document_type": document_type}),
+    }
+    data, error = forward_get("/documents", params)
+    all_states: list[dict[str, Any]] = []
+    if not error and isinstance(data, dict):
+        all_states = data.get("documents", data.get("data", data.get("results", [])))
+
+    state_by_id: dict[str, dict[str, Any]] = {}
+    for s in all_states:
+        did = s.get("document_id", "")
+        if did:
+            state_by_id[did] = s
+
+    results: dict[str, dict[str, Any]] = {}
+    for did in document_ids:
+        did = str(did).strip()
+        if did in state_by_id:
+            results[did] = state_by_id[did]
+        else:
+            results[did] = {
+                "document_id": did,
+                "document_type": document_type,
+                "steps": dict(_DEFAULT_WORKFLOW_STATE),
+                "ready_for_compliance": False,
+            }
+    return jsonify({"states": results})

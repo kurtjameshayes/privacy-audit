@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { apiGet } from "../api/client";
 import type { AlertsListResponse, AlertListItem } from "../types/api";
 import { InfoIcon } from "../components/Tooltip";
@@ -68,7 +68,7 @@ export default function AlertsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchAlerts = async () => {
+  const fetchAlerts = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -91,11 +91,11 @@ export default function AlertsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [limit, offset, policyDocumentId, companyName, jurisdiction, since]);
 
   useEffect(() => {
     void fetchAlerts();
-  }, [limit, offset]);
+  }, [fetchAlerts]);
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {

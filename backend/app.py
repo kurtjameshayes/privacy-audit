@@ -17,7 +17,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 
-from backend.config import APP_PROMPTS_FOLDER, API_BASE_URL, STATIC_FOLDER
+from backend.config import APP_API_KEY, APP_PROMPTS_FOLDER, API_BASE_URL, STATIC_FOLDER
 from backend.upstream import api_headers
 from backend.routes.gather import bp as gather_bp
 from backend.routes.documents import bp as documents_bp
@@ -32,6 +32,24 @@ CORS(app, resources={r"/api/*": {"origins": CORS_ORIGINS}})
 app.register_blueprint(gather_bp)
 app.register_blueprint(documents_bp)
 app.register_blueprint(compliance_bp)
+
+
+# ── API key authentication ────────────────────────────────────
+
+_PUBLIC_PREFIXES = ("/api/health",)
+
+@app.before_request
+def _require_api_key() -> Any:
+    if not APP_API_KEY:
+        return None
+    if request.path in _PUBLIC_PREFIXES or not request.path.startswith("/api/"):
+        return None
+    token = request.headers.get("Authorization", "")
+    if token.startswith("Bearer "):
+        token = token[7:]
+    if not token or token != APP_API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    return None
 
 
 # ── Health / config ──────────────────────────────────────────

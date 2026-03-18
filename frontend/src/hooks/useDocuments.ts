@@ -2,6 +2,9 @@ import { useEffect, useState, useCallback } from "react";
 import { apiPost } from "../api/client";
 import type { DocumentRecord } from "../types/api";
 
+const POLICY_DATABASE =
+  (import.meta as Record<string, Record<string, string>>).env?.VITE_POLICY_DATABASE ?? "privacy-compliance";
+
 function extractResponseArray(data: unknown): unknown[] {
   if (Array.isArray(data)) return data;
   if (data && typeof data === "object") {
@@ -24,12 +27,11 @@ export function useDocuments(mode: DocMode) {
   const fetchDocuments = useCallback(async () => {
     setLoading(true);
     setError(null);
-    setDocuments([]);
     try {
       const data = await apiPost<{ documents?: DocumentRecord[] }>(
         "/api/documents",
         {
-          database_name: "privacy-compliance",
+          database_name: POLICY_DATABASE,
           collection_name: mode === "policy" ? "policies" : "statutes",
         }
       );
