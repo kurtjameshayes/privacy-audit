@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import ErrorBoundary from "./components/ErrorBoundary";
 import Layout from "./components/Layout";
 import GatherPage from "./pages/GatherPage";
 import PoliciesPage from "./pages/PoliciesPage";
@@ -12,20 +13,22 @@ import ConsumerRightsRouterPage from "./pages/ConsumerRightsRouterPage";
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Navigate to="/gather" replace />} />
-          <Route path="gather" element={<GatherPage />} />
-          <Route path="policies" element={<PoliciesPage />} />
-          <Route path="compliance" element={<CompliancePage />} />
-          <Route path="consumer-rights" element={<ConsumerRightsRouterPage />} />
-          <Route path="advisor" element={<AdvisorPage />} />
-          <Route path="alerts" element={<AlertsPage />} />
-          <Route path="runs" element={<RunsPage />} />
-          <Route path="reports" element={<ReportsPage />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/gather" replace />} />
-      </Routes>
+      <ErrorBoundary>
+        <Routes>
+          <Route path="/" element={<Layout />}>
+            <Route index element={<Navigate to="/gather" replace />} />
+            <Route path="gather" element={<GatherPage />} />
+            <Route path="policies" element={<PoliciesPage />} />
+            <Route path="compliance" element={<CompliancePage />} />
+            <Route path="consumer-rights" element={<ConsumerRightsRouterPage />} />
+            <Route path="advisor" element={<AdvisorPage />} />
+            <Route path="alerts" element={<AlertsPage />} />
+            <Route path="runs" element={<RunsPage />} />
+            <Route path="reports" element={<ReportsPage />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/gather" replace />} />
+        </Routes>
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }

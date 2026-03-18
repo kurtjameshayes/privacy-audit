@@ -63,7 +63,7 @@ bp = Blueprint("compliance", __name__)
 
 def _write_compliance_document(collection: str, document: dict[str, Any]) -> None:
     """Persist a document to the compliance results/alerts/run_log collection."""
-    forward_post(
+    _, error = forward_post(
         "/write_to_collection",
         {
             "database_name": POLICY_DATABASE,
@@ -72,6 +72,9 @@ def _write_compliance_document(collection: str, document: dict[str, Any]) -> Non
             "mode": "append",
         },
     )
+    if error:
+        msg, status = error
+        logger.error("Failed to write to %s: %s (status=%s)", collection, msg, status)
 
 
 def _workflow_collection() -> str:
@@ -132,6 +135,7 @@ def _run_compliance_job_in_background(
     job_request: dict[str, Any],
 ) -> None:
     """Execute compliance job async and update job status/result."""
+    logger.info("Background job started: job_id=%s type=%s", job_id, job_type)
     now = datetime.now(timezone.utc).isoformat()
     config = load_compliance_config()
     index_db = job_request.get("index_database_name") or config.get("index_database_name")
@@ -251,6 +255,7 @@ def _run_compliance_job_in_background(
         else:
             raise ValueError(f"unsupported_job_type:{job_type}")
 
+        logger.info("Background job completed: job_id=%s type=%s", job_id, job_type)
         completed = datetime.now(timezone.utc).isoformat()
         _upsert_compliance_job(
             {
@@ -727,6 +732,7 @@ def compliance_create_job() -> Any:
         return jsonify({"error": "jurisdiction is required for policy_statute jobs."}), 400
 
     job_id = str(uuid.uuid4())
+    logger.info("Creating compliance job: type=%s policy=%s job_id=%s", job_type, policy_document_id, job_id)
     job_request: dict[str, Any] = {
         "policy_document_id": policy_document_id,
     }
@@ -971,9 +977,18 @@ def compliance_runs() -> Any:
     return jsonify(data)
 
 
+def _is_valid_id(value: str) -> bool:
+    """Accept UUID or 24-hex-char MongoDB ObjectId -- reject anything else."""
+    import re
+    return bool(re.fullmatch(r"[0-9a-fA-F-]{24,36}", value))
+
+
 @bp.route("/api/compliance/runs/<run_id>", methods=["GET", "DELETE"])
 def compliance_run_detail(run_id: str) -> Any:
     """Serve run detail from compliance_run_log. DELETE requires upstream support."""
+    if not _is_valid_id(run_id):
+        return jsonify({"error": "Invalid run_id format."}), 400
+
     if request.method == "DELETE":
         data, error = forward_delete(f"/api/compliance/runs/{run_id}", {})
         if error:

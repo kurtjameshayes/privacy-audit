@@ -6,10 +6,24 @@ import logging
 from typing import Any, Literal, Tuple
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from backend.config import API_BASE_URL, FIRECRAWL_API_KEY
 
 logger = logging.getLogger(__name__)
+
+_retry_strategy = Retry(
+    total=3,
+    backoff_factor=0.5,
+    status_forcelist=[502, 503, 504],
+    allowed_methods=["GET", "POST", "DELETE"],
+)
+_adapter = HTTPAdapter(max_retries=_retry_strategy)
+
+_session = requests.Session()
+_session.mount("http://", _adapter)
+_session.mount("https://", _adapter)
 
 
 def api_headers() -> dict[str, str]:
@@ -29,13 +43,13 @@ def _forward_request(
 ) -> Tuple[Any, Tuple[str, int] | None]:
     """Send a request to the upstream Web Gather API and return (data, error)."""
     if not API_BASE_URL:
-        return None, ("GATHER_API_BASE_URL is not set.", 500)
+        return None, ("Upstream API is not configured.", 500)
     if not FIRECRAWL_API_KEY:
-        return None, ("FIRECRAWL_API_KEY is not set.", 500)
+        return None, ("Upstream API credentials are not configured.", 500)
 
     url = f"{API_BASE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
     try:
-        response = requests.request(
+        response = _session.request(
             method,
             url,
             json=payload if method in ("POST",) else None,
@@ -43,9 +57,10 @@ def _forward_request(
             headers=api_headers(),
             timeout=timeout,
         )
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        logger.error("Upstream request failed: %s %s — %s", method, url, exc)
         return None, (
-            "Upstream service unavailable. Check that the service at GATHER_API_BASE_URL is running.",
+            "Upstream service unavailable.",
             502,
         )
 

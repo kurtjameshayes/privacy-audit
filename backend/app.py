@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
@@ -11,14 +12,22 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+
 from backend.config import APP_PROMPTS_FOLDER, API_BASE_URL, STATIC_FOLDER
 from backend.upstream import api_headers
 from backend.routes.gather import bp as gather_bp
 from backend.routes.documents import bp as documents_bp
 from backend.routes.compliance import bp as compliance_bp
 
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+
 app = Flask(__name__, static_folder=None)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB
+CORS(app, resources={r"/api/*": {"origins": CORS_ORIGINS}})
 
 app.register_blueprint(gather_bp)
 app.register_blueprint(documents_bp)
@@ -61,8 +70,8 @@ def get_privacy_policy_search_config() -> Any:
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
         return jsonify(config)
-    except (json.JSONDecodeError, IOError) as exc:
-        return jsonify({"error": str(exc)}), 500
+    except (json.JSONDecodeError, IOError):
+        return jsonify({"error": "Failed to load search configuration."}), 500
 
 
 @app.route("/api/config/policy-parse", methods=["GET"])
@@ -94,8 +103,8 @@ def get_policy_parse_config() -> Any:
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
         return jsonify(config)
-    except (json.JSONDecodeError, IOError) as exc:
-        return jsonify({"error": str(exc)}), 500
+    except (json.JSONDecodeError, IOError):
+        return jsonify({"error": "Failed to load parse configuration."}), 500
 
 
 # ── Static file serving ──────────────────────────────────────
@@ -138,4 +147,8 @@ def handle_405(error: Any) -> Any:
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5120, debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=5120,
+        debug=os.getenv("FLASK_DEBUG", "").lower() == "true",
+    )

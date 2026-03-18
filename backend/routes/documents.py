@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Tuple
 
 from flask import Blueprint, jsonify, request
 
 from backend.config import (
+    ALLOWED_COLLECTIONS,
+    ALLOWED_DATABASES,
     POLICY_CHUNK_COLLECTION,
     POLICY_COLLECTION,
     POLICY_DATABASE,
@@ -32,6 +35,8 @@ except ImportError:
         get_workflow_state,
         upsert_workflow_state,
     )
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("documents", __name__)
 
@@ -110,6 +115,7 @@ def list_documents() -> Any:
     payload = request.get_json(silent=True) or {}
     database_name = str(payload.get("database_name", "")).strip()
     collection_name = str(payload.get("collection_name", "")).strip()
+    logger.info("List documents: db=%s collection=%s", database_name, collection_name)
     query = payload.get("query")
 
     if not database_name or not collection_name:
@@ -117,12 +123,22 @@ def list_documents() -> Any:
             "error": "database_name and collection_name are required."
         }), 400
 
+    if database_name not in ALLOWED_DATABASES:
+        logger.warning("Blocked request to disallowed database: %s", database_name)
+        return jsonify({"error": "Invalid database_name."}), 403
+    if collection_name not in ALLOWED_COLLECTIONS:
+        logger.warning("Blocked request to disallowed collection: %s", collection_name)
+        return jsonify({"error": "Invalid collection_name."}), 403
+
     params: dict[str, Any] = {
         "database_name": database_name,
         "collection_name": collection_name,
     }
     if query is not None:
-        if isinstance(query, (dict, list)):
+        if isinstance(query, dict):
+            query = {k: v for k, v in query.items() if not k.startswith("$")}
+            params["query"] = json.dumps(query)
+        elif isinstance(query, list):
             params["query"] = json.dumps(query)
         else:
             params["query"] = str(query)
@@ -213,6 +229,8 @@ def save_parsed_document() -> Any:
     if not isinstance(chunks, list):
         return jsonify({"error": "chunks must be a list."}), 400
 
+    logger.info("save_parsed: doc_id=%s collection=%s chunks=%d", document_id, collection_name, len(chunks))
+
     source_jurisdiction: str | None = None
     if collection_name == STATUTE_CHUNK_COLLECTION:
         statute_res, statute_err = forward_get(
@@ -228,39 +246,13 @@ def save_parsed_document() -> Any:
             if isinstance(docs, list) and docs:
                 source_jurisdiction = str(docs[0].get("jurisdiction", "") or "").strip() or None
 
-    query = {"document_id": document_id}
-    existing, error = forward_get(
-        "/documents",
-        {
-            "database_name": database_name,
-            "collection_name": collection_name,
-            "query": json.dumps(query),
-        },
-    )
-    if error:
-        message, status = error
-        return jsonify({"error": message}), status
-
-    existing_documents = []
-    if isinstance(existing, dict):
-        existing_documents = existing.get("documents", [])
-    if existing_documents:
-        _, error = forward_delete(
-            "/documents",
-            {
-                "database_name": database_name,
-                "collection_name": collection_name,
-                "query": json.dumps(query),
-            },
-        )
-        if error:
-            message, status = error
-            return jsonify({"error": message}), status
+    import uuid as _uuid
+    staging_id = f"staging-{_uuid.uuid4()}"
 
     def _single_line(s: str) -> str:
         return " ".join(s.split())
 
-    saved_records: list[Any] = []
+    staged_records: list[Any] = []
     for index, chunk in enumerate(chunks):
         if not isinstance(chunk, dict):
             return jsonify({
@@ -286,7 +278,7 @@ def save_parsed_document() -> Any:
         document.pop("_id", None)
         document.pop("parsed_header_text", None)
         document.pop("parsed_text", None)
-        document["document_id"] = document_id
+        document["document_id"] = staging_id
         document["chunk_index"] = index
         document["chunk_header_text"] = chunk_header_text
         document["chunk_text"] = chunk_text
@@ -294,7 +286,7 @@ def save_parsed_document() -> Any:
             if source_jurisdiction is not None:
                 document["jurisdiction"] = source_jurisdiction
             else:
-                document.pop("jurisdiction", None)  # do not infer from content
+                document.pop("jurisdiction", None)
 
         data, error = forward_post(
             "/write_to_collection",
@@ -306,9 +298,42 @@ def save_parsed_document() -> Any:
             },
         )
         if error:
+            forward_delete(
+                "/documents",
+                {
+                    "database_name": database_name,
+                    "collection_name": collection_name,
+                    "query": json.dumps({"document_id": staging_id}),
+                },
+            )
             message, status = error
             return jsonify({"error": message}), status
-        saved_records.append(data)
+        staged_records.append(data)
+
+    forward_delete(
+        "/documents",
+        {
+            "database_name": database_name,
+            "collection_name": collection_name,
+            "query": json.dumps({"document_id": document_id}),
+        },
+    )
+
+    for rec in staged_records:
+        if isinstance(rec, dict) and rec.get("document_id") == staging_id:
+            rec["document_id"] = document_id
+
+    forward_post(
+        "/update_documents",
+        {
+            "database_name": database_name,
+            "collection_name": collection_name,
+            "query": {"document_id": staging_id},
+            "update": {"$set": {"document_id": document_id}},
+        },
+    )
+
+    saved_records = staged_records
 
     wf_coll = load_compliance_config().get("workflow_state_collection", "document_workflow_state")
     doc_type = "statute" if collection_name == STATUTE_CHUNK_COLLECTION else "policy"
