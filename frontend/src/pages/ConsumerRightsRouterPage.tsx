@@ -398,21 +398,10 @@ export default function ConsumerRightsRouterPage() {
     setApplicabilityLoading(true);
     setApplicabilityError(null);
     try {
-      const res = await fetch("/api/compliance/applicability", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ policy_document_id: policyId }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(
-          (err as { error?: string }).error || res.statusText || "Request failed"
-        );
-      }
-      const data = (await res.json()) as {
-        applicable_jurisdictions?: string[];
-        error?: string;
-      };
+      const data = await apiPost<{ applicable_jurisdictions?: string[]; error?: string }>(
+        "/api/compliance/applicability",
+        { policy_document_id: policyId }
+      );
       const suggested = data.applicable_jurisdictions ?? [];
       if (data.error) {
         setApplicabilityError(

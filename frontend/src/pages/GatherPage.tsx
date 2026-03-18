@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { normalizeApiError } from "../api/client";
+import { apiGet, apiPost, normalizeApiError } from "../api/client";
 import {
   Search,
   Globe,
@@ -70,8 +70,6 @@ const modeContent: Record<
 
 const formatPercent = (value: number) =>
   Number.isFinite(value) ? `${Math.round(value)}%` : "—";
-const formatScore = (value: number) =>
-  Number.isFinite(value) ? value.toFixed(2) : "—";
 
 function copyToClipboard(text: string): Promise<void> {
   return navigator.clipboard.writeText(text).catch(() => {
@@ -106,7 +104,6 @@ export default function GatherPage() {
   const [jurisdiction, setJurisdiction] = useState("");
   const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
   const [directUrl, setDirectUrl] = useState("");
-  const [showFileUploadModal, setShowFileUploadModal] = useState(false);
   const [upstreamStatus, setUpstreamStatus] = useState<{
     available: boolean;
     error?: string;
@@ -127,21 +124,14 @@ export default function GatherPage() {
   }, [mode, policySearchConfig, trimmedQuery]);
 
   useEffect(() => {
-    fetch("/api/config/privacy-policy-search")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((config) => config && setPolicySearchConfig(config))
+    apiGet<PolicySearchConfig>("/api/config/privacy-policy-search")
+      .then((config) => setPolicySearchConfig(config))
       .catch(() => {});
   }, []);
 
   useEffect(() => {
-    fetch("/api/upstream-status")
-      .then((r) => (r.ok ? r.json() : { available: false, error: "Check failed" }))
-      .then((data: { available?: boolean; error?: string }) =>
-        setUpstreamStatus({
-          available: data.available ?? false,
-          error: data.error,
-        })
-      )
+    apiGet<{ available?: boolean; error?: string }>("/api/upstream-status")
+      .then((data) => setUpstreamStatus({ available: data.available ?? false, error: data.error }))
       .catch(() => setUpstreamStatus({ available: false, error: "Could not check status" }));
   }, []);
 
@@ -157,16 +147,7 @@ export default function GatherPage() {
     setSelectedResult(null);
     setSaveMessage(null);
     try {
-      const response = await fetch("/api/gather", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: searchQuery }),
-      });
-      if (!response.ok)
-        throw new Error(
-          (await response.text()) || "Unable to gather results."
-        );
-      const data = (await response.json()) as GatherResponse;
+      const data = await apiPost<GatherResponse>("/api/gather", { query: searchQuery });
       setResults(data.results || []);
       setLastQuery(data.query || searchQuery);
     } catch (caught) {
@@ -182,14 +163,8 @@ export default function GatherPage() {
     setCrawlData(null);
     setSaveMessage(null);
     try {
-      const response = await fetch("/api/crawl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: result.url, depth: 1, breadth: 1 }),
-      });
-      if (!response.ok)
-        throw new Error((await response.text()) || "Unable to crawl.");
-      setCrawlData((await response.json()) as CrawlResponse);
+      const crawled = await apiPost<CrawlResponse>("/api/crawl", { url: result.url, depth: 1, breadth: 1 });
+      setCrawlData(crawled);
     } catch (caught) {
       setError(
         normalizeApiError(caught) || "Unable to crawl the selected URL."
@@ -218,14 +193,8 @@ export default function GatherPage() {
     setCrawlData(null);
     setSaveMessage(null);
     try {
-      const response = await fetch("/api/crawl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, depth: 1, breadth: 1 }),
-      });
-      if (!response.ok)
-        throw new Error((await response.text()) || "Unable to crawl.");
-      setCrawlData((await response.json()) as CrawlResponse);
+      const crawled = await apiPost<CrawlResponse>("/api/crawl", { url, depth: 1, breadth: 1 });
+      setCrawlData(crawled);
     } catch (caught) {
       setError(normalizeApiError(caught) || "Unable to crawl the URL.");
       setSelectedResult(null);
@@ -235,7 +204,6 @@ export default function GatherPage() {
   };
 
   const handleFileUpload = async (file: File) => {
-    setShowFileUploadModal(false);
     setError(null);
     const syntheticResult: GatherResult = {
       title: file.name,
@@ -311,14 +279,7 @@ export default function GatherPage() {
       };
       if (mode !== "statute") savePayload.company_name = companyName.trim();
 
-      const response = await fetch("/api/save-policy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(savePayload),
-      });
-      if (!response.ok)
-        throw new Error((await response.text()) || "Unable to save.");
-      const data = (await response.json()) as { message?: string };
+      const data = await apiPost<{ message?: string }>("/api/save-policy", savePayload);
       setSaveMessage(data.message || "Saved to policy collection.");
       setShowSaveConfirmation(true);
     } catch (caught) {

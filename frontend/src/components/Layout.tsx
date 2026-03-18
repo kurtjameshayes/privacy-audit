@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { Outlet, NavLink, useLocation } from "react-router-dom";
+import { Outlet, NavLink } from "react-router-dom";
 import {
   RefreshCw,
   Library,
@@ -27,19 +26,6 @@ const navItems: ReadonlyArray<{
 ];
 
 export default function Layout() {
-  const location = useLocation();
-
-  useEffect(() => {
-    const aside = document.querySelector("aside");
-    const computed = aside ? window.getComputedStyle(aside) : null;
-    // #region agent log
-    fetch("http://127.0.0.1:7513/ingest/ca35bdd0-a85e-4f3f-8fa2-3df702c131ad",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"547d10"},body:JSON.stringify({sessionId:"547d10",runId:"pre-fix-1",hypothesisId:"H3",location:"frontend/src/components/Layout.tsx:35",message:"layout mount computed style snapshot",data:{path:location.pathname,asideFound:Boolean(aside),asideBg:computed?.backgroundColor||null,asideWidth:computed?.width||null,bodyClass:document.body.className,styleSheetCount:document.styleSheets.length},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-    // #region agent log
-    fetch("http://127.0.0.1:7513/ingest/ca35bdd0-a85e-4f3f-8fa2-3df702c131ad",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"547d10"},body:JSON.stringify({sessionId:"547d10",runId:"pre-fix-1",hypothesisId:"H4",location:"frontend/src/components/Layout.tsx:38",message:"asset urls observed in DOM",data:{styleLinks:Array.from(document.querySelectorAll('link[rel=\"stylesheet\"]')).map((l)=>l.getAttribute("href")),moduleScripts:Array.from(document.querySelectorAll('script[type=\"module\"]')).map((s)=>s.getAttribute("src"))},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-  }, [location.pathname]);
-
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
       <aside className="w-64 min-w-[256px] bg-slate-900 text-white flex flex-col">

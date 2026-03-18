@@ -11,7 +11,7 @@ import {
   CheckCircle2,
   Circle,
   ListTree,
-  Server,
+  AlertTriangle,
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";

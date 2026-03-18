@@ -283,10 +283,7 @@ def backfill_workflow_state(
                 "created_at": (state or {}).get("created_at", now),
                 "updated_at": now,
             }
-            existing = get_workflow_state(
-                forward_get, database_name, doc_id, doc_type, workflow_collection
-            )
-            if existing:
+            if state:
                 forward_delete(
                     "/documents",
                     {

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
-import { normalizeApiError } from "../api/client";
+import { apiPost, normalizeApiError } from "../api/client";
 import { formatReportContent } from "../utils/formatReportContent";
 import { useDocuments, extractDocumentId } from "../hooks/useDocuments";
 import type { DocumentRecord } from "../types/api";
@@ -85,19 +85,7 @@ export default function ReportsPage() {
           .filter(Boolean);
       }
 
-      const res = await fetch("/api/compliance/report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(
-          (err as { error?: string }).error || res.statusText || "Request failed"
-        );
-      }
-      const data = (await res.json()) as { content?: string; format?: string };
+      const data = await apiPost<{ content?: string; format?: string }>("/api/compliance/report", body);
       setContent(data.content || "");
       setTimeout(() => previewRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch (err) {

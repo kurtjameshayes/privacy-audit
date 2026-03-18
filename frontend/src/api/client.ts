@@ -14,6 +14,15 @@ function isConnectionError(err: unknown): boolean {
   );
 }
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -23,7 +32,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
         : response.status === 502 || response.status === 503
           ? BACKEND_UNREACHABLE
           : response.statusText || "Request failed";
-    throw new Error(message);
+    throw new ApiError(message, response.status);
   }
   return data as T;
 }
@@ -68,6 +77,15 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+    })
+  );
+}
+
+export async function apiDelete<T>(path: string): Promise<T> {
+  return fetchWithConnectionError<T>(() =>
+    fetch(`${BASE}${path}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
     })
   );
 }
