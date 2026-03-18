@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { apiGet, normalizeApiError } from "../api/client";
+import { apiGet, apiPost, ApiError, normalizeApiError } from "../api/client";
 import RiskAssessmentResultView from "../components/RiskAssessmentResultView";
+import HealthScoreView from "../components/HealthScoreView";
 import { useDocuments, extractDocumentId } from "../hooks/useDocuments";
 import { useWorkflowState, getMissingSteps } from "../hooks/useWorkflowState";
-import type { DocumentRecord, RunSummaryItem, RunsListResponse } from "../types/api";
+import type { DocumentRecord, RunSummaryItem, RunsListResponse, RunDetail } from "../types/api";
 import type {
   PolicyStatuteComplianceResponse,
   PolicySectionResult,
@@ -199,21 +200,10 @@ export default function CompliancePage() {
     setApplicabilityLoading(true);
     setApplicabilityError(null);
     try {
-      const res = await fetch("/api/compliance/applicability", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ policy_document_id: policyId }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(
-          (err as { error?: string }).error || res.statusText || "Request failed"
-        );
-      }
-      const data = (await res.json()) as {
-        applicable_jurisdictions?: string[];
-        error?: string;
-      };
+      const data = await apiPost<{ applicable_jurisdictions?: string[]; error?: string }>(
+        "/api/compliance/applicability",
+        { policy_document_id: policyId }
+      );
       const suggested = data.applicable_jurisdictions ?? [];
       if (data.error) {
         setApplicabilityError(
@@ -252,22 +242,11 @@ export default function CompliancePage() {
       if (n !== undefined && !Number.isNaN(n) && n > 0) {
         payload.num_rows = n;
       }
-      const res = await fetch("/api/compliance/gap-analysis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        if (res.status === 409) void refetchWorkflow();
-        throw new Error(
-          (err as { error?: string }).error || res.statusText || "Request failed"
-        );
-      }
-      const data = (await res.json()) as GapAnalysisResponse;
+      const data = await apiPost<GapAnalysisResponse>("/api/compliance/gap-analysis", payload);
       setGapResult(data);
       setActiveTab("gap");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) void refetchWorkflow();
       setGapError(normalizeApiError(err) || "Gap analysis failed.");
     } finally {
       setGapLoading(false);
@@ -280,27 +259,16 @@ export default function CompliancePage() {
     setHealthError(null);
     setHealthResult(null);
     try {
-      const res = await fetch("/api/compliance/health-score", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          policy_document_id: policyId,
-          applicable_jurisdictions:
-            jurisdictions.length > 0 ? jurisdictions : undefined,
-          save_results: true,
-        }),
+      const data = await apiPost<Record<string, unknown>>("/api/compliance/health-score", {
+        policy_document_id: policyId,
+        applicable_jurisdictions:
+          jurisdictions.length > 0 ? jurisdictions : undefined,
+        save_results: true,
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        if (res.status === 409) void refetchWorkflow();
-        throw new Error(
-          (err as { error?: string }).error || res.statusText || "Request failed"
-        );
-      }
-      const data = await res.json();
       setHealthResult(data);
       setActiveTab("health");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) void refetchWorkflow();
       setHealthError(normalizeApiError(err) || "Health score failed.");
     } finally {
       setHealthLoading(false);
@@ -316,25 +284,14 @@ export default function CompliancePage() {
     setMultiError(null);
     setMultiResult(null);
     try {
-      const res = await fetch("/api/compliance/multi-jurisdictional", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          applicable_jurisdictions: jurisdictions,
-          policy_document_id: policyId,
-        }),
+      const data = await apiPost<Record<string, unknown>>("/api/compliance/multi-jurisdictional", {
+        applicable_jurisdictions: jurisdictions,
+        policy_document_id: policyId,
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        if (res.status === 409) void refetchWorkflow();
-        throw new Error(
-          (err as { error?: string }).error || res.statusText || "Request failed"
-        );
-      }
-      const data = await res.json();
       setMultiResult(data);
       setActiveTab("multi");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) void refetchWorkflow();
       setMultiError(normalizeApiError(err) || "Multi-jurisdictional failed.");
     } finally {
       setMultiLoading(false);
@@ -348,26 +305,18 @@ export default function CompliancePage() {
     setPolicyStatuteError(null);
     setPolicyStatuteResult(null);
     try {
-      const res = await fetch("/api/compliance/policy-statute-compliance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await apiPost<PolicyStatuteComplianceResponse>(
+        "/api/compliance/policy-statute-compliance",
+        {
           policy_id: policyId,
           policy_collection: DEFAULT_POLICY_COLLECTION,
           jurisdiction: j,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        if (res.status === 409) void refetchWorkflow();
-        throw new Error(
-          (err as { error?: string }).error || res.statusText || "Request failed"
-        );
-      }
-      const data = (await res.json()) as PolicyStatuteComplianceResponse;
+        }
+      );
       setPolicyStatuteResult(data);
       setActiveTab("policy-statute");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) void refetchWorkflow();
       setPolicyStatuteError(normalizeApiError(err) || "Policy-statute compliance failed.");
     } finally {
       setPolicyStatuteLoading(false);
@@ -429,25 +378,14 @@ export default function CompliancePage() {
     }
 
     try {
-      const res = await fetch("/api/compliance/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        if (res.status === 409) void refetchWorkflow();
-        throw new Error(
-          (err as { error?: string }).error || res.statusText || "Failed to start job"
-        );
-      }
-      const data = (await res.json()) as { job_id?: string };
+      const data = await apiPost<{ job_id?: string }>("/api/compliance/jobs", payload);
       if (!data.job_id) {
         throw new Error("Job started but no job_id was returned.");
       }
       setJobToast({ engine: engineLabel, jobId: data.job_id });
       setPageTab("analysis");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) void refetchWorkflow();
       setJobSubmitError(normalizeApiError(err) || "Failed to start compliance job.");
     } finally {
       setJobSubmitting(false);
@@ -870,62 +808,13 @@ export default function CompliancePage() {
                   <>
                     {healthError && <ErrorBanner message={healthError} />}
                     {healthResult && (
-                      <div className="space-y-6">
-                        {/* Score display */}
-                        <div className="flex items-end gap-3 pb-5 border-b border-slate-100">
-                          <span className="text-5xl font-bold text-slate-900">
-                            {healthScore != null ? healthScore : "—"}
-                          </span>
-                          <span className="text-xl text-slate-400 mb-1">/ 100</span>
-                        </div>
-
-                        {/* Components */}
-                        {healthResult.components && typeof healthResult.components === "object" && (
-                          <div>
-                            <h3 className="text-sm font-semibold text-slate-700 mb-3">Components</h3>
-                            <div className="grid grid-cols-2 gap-3">
-                              {Object.entries(healthResult.components as Record<string, unknown>).map(([k, v]) => (
-                                <div key={k} className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                                  <p className="text-xs text-slate-500 capitalize">{k.replace(/_/g, " ")}</p>
-                                  <p className="text-sm font-semibold text-slate-800 mt-0.5">
-                                    {typeof v === "boolean" ? (v ? "Yes" : "No") : String(v)}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Score breakdown */}
-                        {healthResult.score_breakdown && typeof healthResult.score_breakdown === "object" && (
-                          <div>
-                            <h3 className="text-sm font-semibold text-slate-700 mb-3">Score Breakdown</h3>
-                            {Object.entries(healthResult.score_breakdown as Record<string, unknown>).map(([sectionKey, sectionVal]) => {
-                              if (typeof sectionVal !== "object" || sectionVal === null || Array.isArray(sectionVal)) return null;
-                              const entries = Object.entries(sectionVal as Record<string, unknown>);
-                              if (entries.length === 0) return null;
-                              const sectionLabel = sectionKey === "by_jurisdiction" ? "By jurisdiction" : sectionKey === "by_category" ? "By category" : sectionKey.replace(/_/g, " ");
-                              return (
-                                <div key={sectionKey} className="mb-4">
-                                  <p className="text-xs font-medium text-slate-500 mb-2 uppercase tracking-wider">{sectionLabel}</p>
-                                  <div className="overflow-x-auto">
-                                    <table className="min-w-full text-sm">
-                                      <tbody className="divide-y divide-slate-100">
-                                        {entries.map(([k, v]) => (
-                                          <tr key={k}>
-                                            <td className="py-2 pr-4 text-slate-600 capitalize">{k.replace(/_/g, " ")}</td>
-                                            <td className="py-2 font-medium text-slate-800">{String(v)}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
+                      <HealthScoreView
+                        score={healthScore}
+                        components={healthResult.components as Record<string, unknown> | undefined}
+                        scoreBreakdown={healthResult.score_breakdown as Record<string, unknown> | undefined}
+                        reportText={(healthResult.report_text ?? healthResult.report ?? healthResult.assessment_text) as string | null | undefined}
+                        error={healthError ?? (healthResult.error as string | null | undefined)}
+                      />
                     )}
                   </>
                 )}
@@ -936,7 +825,7 @@ export default function CompliancePage() {
                     {multiError && <ErrorBanner message={multiError} />}
                     {multiResult && (
                       <div className="space-y-6">
-                        {multiResult.applicable_jurisdictions && Array.isArray(multiResult.applicable_jurisdictions) && (
+                        {Array.isArray(multiResult.applicable_jurisdictions) && (
                           <div className="flex flex-wrap gap-2 pb-5 border-b border-slate-100">
                             {(multiResult.applicable_jurisdictions as string[]).map((j) => (
                               <span key={j} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-semibold border border-indigo-100">
@@ -946,7 +835,7 @@ export default function CompliancePage() {
                           </div>
                         )}
 
-                        {multiResult.strictest_common_denominator && Array.isArray(multiResult.strictest_common_denominator) && (
+                        {Array.isArray(multiResult.strictest_common_denominator) && (
                           <div>
                             <h3 className="text-sm font-semibold text-slate-700 mb-3">Strictest Common Denominator</h3>
                             <div className="overflow-x-auto rounded-lg border border-slate-200">
@@ -972,7 +861,7 @@ export default function CompliancePage() {
                           </div>
                         )}
 
-                        {multiResult.conflicts_between_jurisdictions && Array.isArray(multiResult.conflicts_between_jurisdictions) && (multiResult.conflicts_between_jurisdictions as unknown[]).length > 0 && (
+                        {Array.isArray(multiResult.conflicts_between_jurisdictions) && multiResult.conflicts_between_jurisdictions.length > 0 && (
                           <div>
                             <h3 className="text-sm font-semibold text-slate-700 mb-3">Conflicts Between Jurisdictions</h3>
                             <div className="space-y-2">
@@ -1181,7 +1070,7 @@ function ResultsBrowser({
   }, [selectedRunId]);
 
   const gapResult = useMemo(
-    () => toGapAnalysisResponse(runDetail as any),
+    () => toGapAnalysisResponse(runDetail as RunDetail | null),
     [runDetail]
   );
 
@@ -1368,57 +1257,11 @@ function ResultsBrowser({
                 ) : riskResult ? (
                   <RiskAssessmentResultView result={riskResult} />
                 ) : healthResult ? (
-                  <div className="space-y-6">
-                    <div className="flex items-end gap-3 pb-5 border-b border-slate-100">
-                      <span className="text-5xl font-bold text-slate-900">
-                        {healthResult.privacy_health_score != null ? String(healthResult.privacy_health_score) : "—"}
-                      </span>
-                      <span className="text-xl text-slate-400 mb-1">/ 100</span>
-                    </div>
-                    {healthResult.components && typeof healthResult.components === "object" && (
-                      <div>
-                        <h3 className="text-sm font-semibold text-slate-700 mb-3">Components</h3>
-                        <div className="grid grid-cols-2 gap-3">
-                          {Object.entries(healthResult.components as Record<string, unknown>).map(([k, v]) => (
-                            <div key={k} className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                              <p className="text-xs text-slate-500 capitalize">{k.replace(/_/g, " ")}</p>
-                              <p className="text-sm font-semibold text-slate-800 mt-0.5">
-                                {typeof v === "boolean" ? (v ? "Yes" : "No") : String(v)}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {healthResult.score_breakdown && typeof healthResult.score_breakdown === "object" && (
-                      <div>
-                        <h3 className="text-sm font-semibold text-slate-700 mb-3">Score Breakdown</h3>
-                        {Object.entries(healthResult.score_breakdown as Record<string, unknown>).map(([sectionKey, sectionVal]) => {
-                          if (typeof sectionVal !== "object" || sectionVal === null || Array.isArray(sectionVal)) return null;
-                          const entries = Object.entries(sectionVal as Record<string, unknown>);
-                          if (entries.length === 0) return null;
-                          const sectionLabel = sectionKey === "by_jurisdiction" ? "By jurisdiction" : sectionKey === "by_category" ? "By category" : sectionKey.replace(/_/g, " ");
-                          return (
-                            <div key={sectionKey} className="mb-4">
-                              <p className="text-xs font-medium text-slate-500 mb-2 uppercase tracking-wider">{sectionLabel}</p>
-                              <div className="overflow-x-auto">
-                                <table className="min-w-full text-sm">
-                                  <tbody className="divide-y divide-slate-100">
-                                    {entries.map(([k, v]) => (
-                                      <tr key={k}>
-                                        <td className="py-2 pr-4 text-slate-600 capitalize">{k.replace(/_/g, " ")}</td>
-                                        <td className="py-2 font-medium text-slate-800">{String(v)}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+                  <HealthScoreView
+                    score={healthResult.privacy_health_score as number | null | undefined}
+                    components={healthResult.components as Record<string, unknown> | undefined}
+                    scoreBreakdown={healthResult.score_breakdown as Record<string, unknown> | undefined}
+                  />
                 ) : (
                   <div className="text-center py-8 text-slate-500">
                     <p className="font-medium">Raw result data</p>

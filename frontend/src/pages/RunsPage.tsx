@@ -1,9 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkBreaks from "remark-breaks";
-import { apiGet, apiPost } from "../api/client";
-import { formatReportContent } from "../utils/formatReportContent";
+import { apiGet, apiPost, apiDelete, ApiError } from "../api/client";
 import { GapAnalysisResult } from "../components/GapAnalysisView";
+import HealthScoreView from "../components/HealthScoreView";
 import RiskAssessmentResultView from "../components/RiskAssessmentResultView";
 import { InfoIcon, Tooltip } from "../components/Tooltip";
 import type {
@@ -57,22 +55,6 @@ const JOB_TYPE_LABELS: Record<string, string> = {
 
 function formatJobType(value: string): string {
   return JOB_TYPE_LABELS[value] ?? value.replace(/_/g, " ");
-}
-
-const COMPONENT_LABELS: Record<string, string> = {
-  requirements_total: "Requirements total",
-  addressed: "Addressed",
-  missing: "Missing",
-  conflicts: "Conflicts",
-  raw_ratio: "Raw ratio",
-  conflict_penalty_applied: "Conflict penalty applied",
-};
-
-function formatComponentValue(_key: string, value: unknown): string {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (typeof value === "number") return String(value);
-  return String(value);
 }
 
 const SCORE_ASSESSMENT_TEXT_KEYS = [
@@ -326,25 +308,14 @@ export default function RunsPage() {
     setReportLoading(true);
     setReportError(null);
     try {
-      const res = await fetch("/api/compliance/report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          policy_document_id: policyId,
-          format: "markdown",
-          source: "latest_stored",
-          include_gap: true,
-          include_health_score: true,
-          include_multi_jurisdictional: false,
-        }),
+      const d = await apiPost<{ content?: string }>("/api/compliance/report", {
+        policy_document_id: policyId,
+        format: "markdown",
+        source: "latest_stored",
+        include_gap: true,
+        include_health_score: true,
+        include_multi_jurisdictional: false,
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(
-          (err as { error?: string }).error || res.statusText || "Report failed"
-        );
-      }
-      const d = (await res.json()) as { content?: string };
       const content = d.content ?? "";
       const blob = new Blob([content], { type: "text/markdown" });
       const url = URL.createObjectURL(blob);
@@ -397,15 +368,11 @@ export default function RunsPage() {
     setDeleteLoading(true);
     setReportError(null);
     try {
-      const res = await fetch(`/api/compliance/runs/${targetId}`, { method: "DELETE" });
-      const d = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        if (res.status === 501) setDeleteSupported(false);
-        throw new Error(d.error ?? res.statusText);
-      }
+      await apiDelete(`/api/compliance/runs/${targetId}`);
       if (targetId === selectedRunId) setSelectedRunId(null);
       await fetchRuns();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 501) setDeleteSupported(false);
       setReportError(err instanceof Error ? err.message : "Delete failed.");
     } finally {
       setDeleteLoading(false);
@@ -600,7 +567,7 @@ export default function RunsPage() {
                 filteredRuns.map((run) => {
                   const id = getRunId(run) ?? run.policy_document_id ?? "";
                   const displayId = run.run_id ?? run.job_id ?? "";
-                  const dateVal = run.run_at ?? run.created_at ?? run.completed_at;
+                  const dateVal = run.run_at ?? run.created_at ?? run.completed_at ?? undefined;
                   const typeVal = run.job_type ?? (Array.isArray(run.types) ? run.types[0] : null);
                   const statusVal = run.status;
                   const scoreDisplay = getScoreDisplay(run);
@@ -862,9 +829,9 @@ export default function RunsPage() {
                     <div className="flex flex-col items-center py-8 text-slate-500">
                       <AlertCircle className="h-10 w-10 text-red-400 mb-3" />
                       <p className="font-semibold text-red-700">Job failed</p>
-                      {(runDetail as Record<string, unknown>).error && (
+                      {typeof (runDetail as Record<string, unknown>).error === "string" && (
                         <p className="text-sm text-red-600 mt-1 max-w-md text-center">
-                          {String((runDetail as Record<string, unknown>).error)}
+                          {(runDetail as Record<string, unknown>).error as string}
                         </p>
                       )}
                       <button
@@ -903,75 +870,13 @@ export default function RunsPage() {
                       onExpandGap={setExpandedGapIndex}
                     />
                   ) : runJobType === "health_score" && scoreAssessmentResult ? (
-                    <div className="space-y-4">
-                      <h3 className="text-sm font-semibold text-slate-700">Score Assessment</h3>
-
-                      {scoreAssessmentResult.reportText && (
-                        <div className="prose prose-sm max-w-none bg-slate-50 p-4 rounded-lg border border-slate-200">
-                          <ReactMarkdown remarkPlugins={[remarkBreaks]}>
-                            {formatReportContent(scoreAssessmentResult.reportText)}
-                          </ReactMarkdown>
-                        </div>
-                      )}
-
-                      {scoreAssessmentResult.error && (
-                        <p className="text-sm text-red-600">{scoreAssessmentResult.error}</p>
-                      )}
-
-                      {scoreAssessmentResult.privacy_health_score != null ? (
-                        <div className="flex items-end gap-2">
-                          <span className="text-4xl font-bold text-slate-900">
-                            {scoreAssessmentResult.privacy_health_score}
-                          </span>
-                          <span className="text-sm text-slate-500 mb-1">Privacy health score</span>
-                        </div>
-                      ) : !scoreAssessmentResult.error ? (
-                        <p className="text-sm text-slate-500 italic">Score unavailable</p>
-                      ) : null}
-
-                      {scoreAssessmentResult.components && Object.keys(scoreAssessmentResult.components).length > 0 && (
-                        <div>
-                          <h4 className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wider">Components</h4>
-                          <div className="grid grid-cols-2 gap-2">
-                            {Object.entries(scoreAssessmentResult.components).map(([k, v]) => (
-                              <div key={k} className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                                <p className="text-xs text-slate-500 capitalize">{COMPONENT_LABELS[k] ?? k.replace(/_/g, " ")}</p>
-                                <p className="text-sm font-semibold text-slate-800 mt-0.5">{formatComponentValue(k, v)}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {scoreAssessmentResult.score_breakdown && Object.keys(scoreAssessmentResult.score_breakdown).length > 0 && (
-                        <div>
-                          <h4 className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wider">Score Breakdown</h4>
-                          {Object.entries(scoreAssessmentResult.score_breakdown).map(([sectionKey, sectionVal]) => {
-                            if (typeof sectionVal !== "object" || sectionVal === null || Array.isArray(sectionVal)) return null;
-                            const entries = Object.entries(sectionVal as Record<string, unknown>);
-                            if (entries.length === 0) return null;
-                            const sectionLabel = sectionKey === "by_jurisdiction" ? "By jurisdiction" : sectionKey === "by_category" ? "By category" : sectionKey.replace(/_/g, " ");
-                            return (
-                              <div key={sectionKey} className="mb-3">
-                                <p className="text-xs font-medium text-slate-500 mb-1 capitalize">{sectionLabel}</p>
-                                <div className="overflow-x-auto">
-                                  <table className="min-w-full text-sm">
-                                    <tbody className="divide-y divide-slate-100">
-                                      {entries.map(([k, v]) => (
-                                        <tr key={k}>
-                                          <td className="py-1.5 pr-4 text-slate-600 capitalize">{k.replace(/_/g, " ")}</td>
-                                          <td className="py-1.5 font-medium text-slate-800">{formatComponentValue(k, v)}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
+                    <HealthScoreView
+                      score={scoreAssessmentResult.privacy_health_score ?? undefined}
+                      components={scoreAssessmentResult.components}
+                      scoreBreakdown={scoreAssessmentResult.score_breakdown}
+                      reportText={scoreAssessmentResult.reportText}
+                      error={scoreAssessmentResult.error}
+                    />
                   ) : (
                     <div className="flex flex-col items-center py-8 text-slate-500">
                       <div className="bg-slate-50 p-4 rounded-full mb-3">
