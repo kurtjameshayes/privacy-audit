@@ -6,8 +6,11 @@ vector index steps are complete.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 # Collection and schema
 WORKFLOW_STATE_COLLECTION = "document_workflow_state"
@@ -71,6 +74,7 @@ def upsert_workflow_state(
     """Upsert workflow state, marking the given step as completed."""
     if step not in WORKFLOW_STEPS:
         return
+    logger.info("Workflow transition: doc_id=%s type=%s step=%s", document_id, document_type, step)
     now = datetime.now(timezone.utc).isoformat()
     existing = get_workflow_state(
         forward_get, database_name, document_id, document_type, workflow_collection

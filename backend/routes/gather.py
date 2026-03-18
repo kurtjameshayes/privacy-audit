@@ -37,11 +37,17 @@ def gather() -> Any:
     if not query:
         return jsonify({"error": "Query is required."}), 400
 
+    logger.info("Gather request: query=%s", query[:120])
     data, error = forward_post("/gather", {"query": query})
     if error:
         message, status = error
+        logger.warning("Gather failed: %s (status=%s)", message, status)
         return jsonify({"error": message}), status
     return jsonify(data)
+
+
+MAX_CRAWL_DEPTH = 10
+MAX_CRAWL_BREADTH = 50
 
 
 @bp.route("/api/crawl", methods=["POST"])
@@ -51,15 +57,20 @@ def crawl() -> Any:
     if not url:
         return jsonify({"error": "URL is required."}), 400
 
-    def normalize_int(value: Any, fallback: int) -> int:
+    from urllib.parse import urlparse
+    parsed_url = urlparse(url)
+    if parsed_url.scheme not in ("http", "https"):
+        return jsonify({"error": "Only http/https URLs are allowed."}), 400
+
+    def normalize_int(value: Any, fallback: int, ceiling: int) -> int:
         try:
             parsed = int(value)
         except (TypeError, ValueError):
             return fallback
-        return max(1, parsed)
+        return max(1, min(parsed, ceiling))
 
-    depth = normalize_int(payload.get("depth"), 1)
-    breadth = normalize_int(payload.get("breadth"), 1)
+    depth = normalize_int(payload.get("depth"), 1, MAX_CRAWL_DEPTH)
+    breadth = normalize_int(payload.get("breadth"), 1, MAX_CRAWL_BREADTH)
 
     crawl_payload: dict[str, Any] = {
         "url": url,
@@ -69,9 +80,11 @@ def crawl() -> Any:
     if PROXY_URL:
         crawl_payload["proxy"] = PROXY_URL
 
+    logger.info("Crawl request: url=%s depth=%d breadth=%d", url, depth, breadth)
     data, error = forward_post("/crawl", crawl_payload)
     if error:
         message, status = error
+        logger.warning("Crawl failed: %s (status=%s)", message, status)
         return jsonify({"error": message}), status
     return jsonify(data)
 
@@ -133,6 +146,7 @@ def save_policy() -> Any:
         return jsonify({"error": "Jurisdiction is required for statutes."}), 400
 
     document_id = str(uuid.uuid4())
+    logger.info("Saving %s: document_id=%s company=%s", mode, document_id, company_name)
     document = {
         "document_id": document_id,
         "source_url": url,
