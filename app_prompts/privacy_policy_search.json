@@ -1,0 +1,5 @@
+{
+    "module": "search_policy",
+    "append_prompt": "Privacy Policy full text",
+    "prepend_prompt": ""
+}
