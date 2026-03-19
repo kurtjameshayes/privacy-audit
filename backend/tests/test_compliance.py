@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 from backend import app as app_module
+from backend.routes import compliance as comp_module
+from backend.routes import documents as docs_module
 
 
 def test_vector_search_requires_index_names() -> None:
@@ -33,7 +35,7 @@ def test_vector_search_forwards_payload(monkeypatch: Any) -> None:
         calls.append((endpoint, payload))
         return {"chunks": []}, None
 
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -88,8 +90,8 @@ def test_compliance_applicability_returns_json(monkeypatch: Any) -> None:
             return {"chunks": [{"parsed_text": '{"applicable_jurisdictions": ["CA"], "confidence": {"CA": 0.9}}'}]}, None
         return None, ("upstream error", 502)
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -131,8 +133,8 @@ def test_compliance_applicability_parsed_doc_format(monkeypatch: Any) -> None:
             }, None
         return None, ("upstream error", 502)
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -183,8 +185,8 @@ def test_compliance_gap_analysis_returns_spec_shape(monkeypatch: Any) -> None:
             }, None
         return None, ("upstream", 502)
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -240,8 +242,8 @@ def test_compliance_gap_analysis_produces_gaps_when_upstream_succeeds(monkeypatc
             }, None
         return None, ("upstream", 502)
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -287,8 +289,8 @@ def test_compliance_multi_jurisdictional_returns_spec_shape(monkeypatch: Any) ->
             return {"chunks": [{"jurisdiction": "CA"}, {"jurisdiction": "VA"}]}, None
         return {"chunks": []}, None
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -398,9 +400,9 @@ def test_compliance_multi_jurisdictional_detects_and_saves_conflicts(monkeypatch
             return {"ok": True}, None
         return {"ok": True}, None
 
-    monkeypatch.setattr(app_module, "load_compliance_config", fake_config)
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module, "load_compliance_config", fake_config)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -460,9 +462,9 @@ def test_compliance_jobs_starts_background_job_and_returns_job_id(monkeypatch: A
         def start(self) -> None:
             started.append(True)
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
-    monkeypatch.setattr(app_module.threading, "Thread", FakeThread)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module.threading, "Thread", FakeThread)
 
     client = app_module.app.test_client()
     response = client.post(
@@ -527,8 +529,8 @@ def test_compliance_health_score_returns_spec_shape(monkeypatch: Any) -> None:
             }, None
         return None, ("upstream", 502)
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -585,8 +587,8 @@ def test_compliance_health_score_accepts_weights(monkeypatch: Any) -> None:
             }, None
         return None, ("upstream", 502)
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     weights = {
@@ -622,8 +624,8 @@ def test_compliance_drift_check_returns_spec_shape(monkeypatch: Any) -> None:
             }, None
         return {"chunks": []}, None
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post("/api/compliance/drift-check", json={})
@@ -637,8 +639,8 @@ def test_compliance_drift_check_returns_spec_shape(monkeypatch: Any) -> None:
 
 
 def test_compliance_runs_backfills_company_name_from_policies(monkeypatch: Any) -> None:
-    def fake_fetch_documents(collection: str) -> list[dict[str, Any]]:
-        if collection == app_module.COMPLIANCE_JOBS_COLLECTION:
+    def fake_fetch_documents(collection: str, query: Any = None, limit: Any = None) -> list[dict[str, Any]]:
+        if collection == comp_module.COMPLIANCE_JOBS_COLLECTION:
             return [
                 {
                     "_id": "run-1",
@@ -650,17 +652,17 @@ def test_compliance_runs_backfills_company_name_from_policies(monkeypatch: Any) 
                     "status": "completed",
                 }
             ]
-        if collection == app_module.COMPLIANCE_RUN_LOG_COLLECTION:
+        if collection == comp_module.COMPLIANCE_RUN_LOG_COLLECTION:
             return []
-        if collection == app_module.COMPLIANCE_RESULTS_COLLECTION:
+        if collection == comp_module.COMPLIANCE_RESULTS_COLLECTION:
             return []
-        if collection == app_module.POLICY_COLLECTION:
+        if collection == comp_module.POLICY_COLLECTION:
             return [{"document_id": "doc-1", "company_name": "Feeders Pet Supply"}]
         return []
 
-    monkeypatch.setattr(app_module, "_fetch_documents", fake_fetch_documents)
+    monkeypatch.setattr(comp_module, "_fetch_documents", fake_fetch_documents)
 
-    data = app_module._runs_from_compliance_run_log(limit=50, offset=0)
+    data = comp_module._runs_from_compliance_run_log(limit=50, offset=0)
 
     assert data["total"] == 1
     assert data["runs"][0]["policy_document_id"] == "doc-1"

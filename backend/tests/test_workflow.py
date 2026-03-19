@@ -6,13 +6,15 @@ from typing import Any
 
 from backend import app as app_module
 from backend import workflow as workflow_module
+from backend.routes import compliance as comp_module
+from backend.routes import documents as docs_module
 
 
 def test_workflow_state_returns_not_ready_when_missing(monkeypatch: Any) -> None:
     def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
         return {"documents": []}, None
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(docs_module, "forward_get", fake_forward_get)
     client = app_module.app.test_client()
 
     response = client.get(
@@ -46,7 +48,7 @@ def test_workflow_state_returns_ready_when_complete(monkeypatch: Any) -> None:
             return {"documents": [ready_state]}, None
         return {"documents": []}, None
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(docs_module, "forward_get", fake_forward_get)
     client = app_module.app.test_client()
 
     response = client.get(
@@ -69,8 +71,8 @@ def test_compliance_returns_409_when_policy_not_ready(monkeypatch: Any) -> None:
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
         return {"chunks": []}, None
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(comp_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(comp_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(

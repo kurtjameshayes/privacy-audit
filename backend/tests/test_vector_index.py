@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from backend import app as app_module
+from backend.routes import documents as docs_module
 
 
 def test_vector_index_requires_fields() -> None:
@@ -21,7 +22,7 @@ def test_vector_index_serializes_query(monkeypatch: Any) -> None:
         post_calls.append((endpoint, payload))
         return {"ok": True}, None
 
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -50,7 +51,7 @@ def test_vector_index_passes_text_column(monkeypatch: Any) -> None:
         post_calls.append((endpoint, payload))
         return {"ok": True}, None
 
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(

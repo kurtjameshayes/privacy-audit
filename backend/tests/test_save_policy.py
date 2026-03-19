@@ -4,6 +4,7 @@ import uuid
 from typing import Any
 
 from backend import app as app_module
+from backend.routes import gather as gather_module
 
 
 def test_save_policy_omits_jurisdiction_for_policy(monkeypatch: Any) -> None:
@@ -13,7 +14,7 @@ def test_save_policy_omits_jurisdiction_for_policy(monkeypatch: Any) -> None:
         calls.append(payload)
         return {"ok": True}, None
 
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(gather_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -44,7 +45,7 @@ def test_save_policy_includes_jurisdiction_for_statute(monkeypatch: Any) -> None
         calls.append(payload)
         return {"ok": True}, None
 
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(gather_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(

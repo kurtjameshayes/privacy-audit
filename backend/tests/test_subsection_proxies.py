@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend import app as app_module
+from backend.routes import documents as docs_module
 
 
 def test_create_statute_subsections_requires_document_id() -> None:
@@ -21,7 +22,7 @@ def test_create_statute_subsections_forwards_payload(monkeypatch: Any) -> None:
         calls.append((endpoint, payload))
         return {"ok": True}, None
 
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -53,7 +54,7 @@ def test_create_policy_subsections_forwards_payload(monkeypatch: Any) -> None:
         calls.append((endpoint, payload))
         return {"ok": True}, None
 
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -84,7 +85,7 @@ def test_create_vector_index_forwards_payload(monkeypatch: Any) -> None:
         calls.append((endpoint, payload))
         return {"ok": True}, None
 
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -127,9 +128,9 @@ def test_run_subsection_pipeline_runs_full_workflow(monkeypatch: Any) -> None:
     def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
         return None, None
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
-    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    monkeypatch.setattr(docs_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_delete", fake_forward_delete)
     client = app_module.app.test_client()
 
     response = client.post(

@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from backend import app as app_module
+from backend.routes import documents as docs_module
+
+
+def _noop_delete(endpoint: str, params: dict[str, Any]) -> Any:
+    return None, None
 
 
 def test_save_parsed_runs_subsection_pipeline(monkeypatch: Any) -> None:
@@ -18,12 +23,9 @@ def test_save_parsed_runs_subsection_pipeline(monkeypatch: Any) -> None:
         post_calls.append((endpoint, payload))
         return {"ok": True}, None
 
-    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
-        return None, None
-
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
-    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    monkeypatch.setattr(docs_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_delete", _noop_delete)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -62,12 +64,9 @@ def test_save_parsed_writes_each_section(monkeypatch: Any) -> None:
         calls.append(payload)
         return {"ok": True}, None
 
-    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
-        raise AssertionError("forward_delete should not be called.")
-
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
-    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    monkeypatch.setattr(docs_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_delete", _noop_delete)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -90,7 +89,10 @@ def test_save_parsed_writes_each_section(monkeypatch: Any) -> None:
     )
 
     assert response.status_code == 200
-    chunk_calls = [c for c in calls if c.get("collection_name") == "policy_chunks"]
+    chunk_calls = [
+        c for c in calls
+        if c.get("collection_name") == "policy_chunks" and "document" in c
+    ]
     assert len(chunk_calls) == 2
     first_document = chunk_calls[0]["document"]
     second_document = chunk_calls[1]["document"]
@@ -116,12 +118,9 @@ def test_save_parsed_accepts_parsed_header_and_text(monkeypatch: Any) -> None:
         calls.append(payload)
         return {"ok": True}, None
 
-    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
-        raise AssertionError("forward_delete should not be called.")
-
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
-    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    monkeypatch.setattr(docs_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_delete", _noop_delete)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -143,7 +142,10 @@ def test_save_parsed_accepts_parsed_header_and_text(monkeypatch: Any) -> None:
     )
 
     assert response.status_code == 200
-    chunk_calls = [c for c in calls if c.get("collection_name") == "statute_chunks"]
+    chunk_calls = [
+        c for c in calls
+        if c.get("collection_name") == "statute_chunks" and "document" in c
+    ]
     assert len(chunk_calls) == 1
     saved_document = chunk_calls[0]["document"]
     assert saved_document["chunk_header_text"] == "General Duties of Businesses"
@@ -167,12 +169,9 @@ def test_save_parsed_statute_chunks_no_inferred_jurisdiction(monkeypatch: Any) -
         calls.append(payload)
         return {"ok": True}, None
 
-    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
-        raise AssertionError("forward_delete should not be called.")
-
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
-    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    monkeypatch.setattr(docs_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_delete", _noop_delete)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -192,7 +191,10 @@ def test_save_parsed_statute_chunks_no_inferred_jurisdiction(monkeypatch: Any) -
     )
 
     assert response.status_code == 200
-    chunk_calls = [c for c in calls if c.get("collection_name") == "statute_chunks"]
+    chunk_calls = [
+        c for c in calls
+        if c.get("collection_name") == "statute_chunks" and "document" in c
+    ]
     assert len(chunk_calls) == 1
     saved_document = chunk_calls[0]["document"]
     assert "jurisdiction" not in saved_document
@@ -208,12 +210,9 @@ def test_save_parsed_preserves_llm_fields(monkeypatch: Any) -> None:
         calls.append(payload)
         return {"ok": True}, None
 
-    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
-        raise AssertionError("forward_delete should not be called.")
-
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
-    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    monkeypatch.setattr(docs_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_delete", _noop_delete)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -235,14 +234,24 @@ def test_save_parsed_preserves_llm_fields(monkeypatch: Any) -> None:
     )
 
     assert response.status_code == 200
-    chunk_calls = [c for c in calls if c.get("collection_name") == "policy_chunks"]
+    chunk_calls = [
+        c for c in calls
+        if c.get("collection_name") == "policy_chunks" and "document" in c
+    ]
     assert len(chunk_calls) == 1
     saved_document = chunk_calls[0]["document"]
-    assert saved_document["document_id"] == "doc-789"
+    assert saved_document["document_id"].startswith("staging-")
     assert saved_document["chunk_index"] == 0
     assert saved_document["jurisdiction"] == "US"
     assert saved_document["section"] == "1.2"
     assert "_id" not in saved_document
+
+    promote_calls = [
+        c for c in calls
+        if c.get("collection_name") == "policy_chunks" and "update" in c
+    ]
+    assert len(promote_calls) == 1
+    assert promote_calls[0]["update"]["$set"]["document_id"] == "doc-789"
 
 
 def test_save_parsed_removes_linefeeds(monkeypatch: Any) -> None:
@@ -256,12 +265,9 @@ def test_save_parsed_removes_linefeeds(monkeypatch: Any) -> None:
         calls.append(payload)
         return {"ok": True}, None
 
-    def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
-        return None, None
-
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
-    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
+    monkeypatch.setattr(docs_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_delete", _noop_delete)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -280,7 +286,10 @@ def test_save_parsed_removes_linefeeds(monkeypatch: Any) -> None:
     )
 
     assert response.status_code == 200
-    chunk_calls = [c for c in calls if c.get("collection_name") == "policy_chunks"]
+    chunk_calls = [
+        c for c in calls
+        if c.get("collection_name") == "policy_chunks" and "document" in c
+    ]
     assert len(chunk_calls) == 1
     saved_document = chunk_calls[0]["document"]
     assert saved_document["chunk_header_text"] == "Header With Lines"
@@ -290,23 +299,25 @@ def test_save_parsed_removes_linefeeds(monkeypatch: Any) -> None:
 
 
 def test_save_parsed_deletes_existing_documents(monkeypatch: Any) -> None:
-    calls: list[tuple[str, dict[str, Any]]] = []
+    get_calls: list[dict[str, Any]] = []
+    delete_calls: list[dict[str, Any]] = []
+    post_calls: list[dict[str, Any]] = []
 
     def fake_forward_get(endpoint: str, params: dict[str, Any]) -> Any:
-        calls.append(("get", params))
+        get_calls.append(params)
         return {"documents": [{"_id": "existing"}]}, None
 
     def fake_forward_delete(endpoint: str, params: dict[str, Any]) -> Any:
-        calls.append(("delete", params))
+        delete_calls.append(params)
         return {"deleted_count": 1}, None
 
     def fake_forward_post(endpoint: str, payload: dict[str, Any]) -> Any:
-        calls.append(("post", payload))
+        post_calls.append(payload)
         return {"ok": True}, None
 
-    monkeypatch.setattr(app_module, "forward_get", fake_forward_get)
-    monkeypatch.setattr(app_module, "forward_delete", fake_forward_delete)
-    monkeypatch.setattr(app_module, "forward_post", fake_forward_post)
+    monkeypatch.setattr(docs_module, "forward_get", fake_forward_get)
+    monkeypatch.setattr(docs_module, "forward_delete", fake_forward_delete)
+    monkeypatch.setattr(docs_module, "forward_post", fake_forward_post)
     client = app_module.app.test_client()
 
     response = client.post(
@@ -325,11 +336,11 @@ def test_save_parsed_deletes_existing_documents(monkeypatch: Any) -> None:
     )
 
     assert response.status_code == 200
-    assert calls[0][0] == "get"
-    assert calls[1][0] == "delete"
-    post_calls = [c for c in calls if c[0] == "post"]
     assert len(post_calls) >= 1
-    delete_params = calls[1][1]
-    assert delete_params["database_name"] == "privacy-compliance"
-    assert delete_params["collection_name"] == "policy_chunks"
-    assert "doc-456" in delete_params["query"]
+    chunk_deletes = [
+        d for d in delete_calls
+        if d.get("collection_name") == "policy_chunks"
+    ]
+    assert len(chunk_deletes) >= 1
+    assert chunk_deletes[0]["database_name"] == "privacy-compliance"
+    assert "doc-456" in chunk_deletes[0]["query"]
