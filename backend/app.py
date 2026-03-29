@@ -7,8 +7,6 @@ import logging
 import os
 from typing import Any
 
-import requests
-
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
@@ -17,8 +15,10 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 
+logger = logging.getLogger(__name__)
+
 from backend.config import APP_API_KEY, APP_PROMPTS_FOLDER, API_BASE_URL, STATIC_FOLDER
-from backend.upstream import api_headers
+from backend.upstream import _session as upstream_session, api_headers
 from backend.routes.gather import bp as gather_bp
 from backend.routes.documents import bp as documents_bp
 from backend.routes.compliance import bp as compliance_bp
@@ -62,17 +62,16 @@ def health() -> Any:
 @app.route("/api/upstream-status", methods=["GET"])
 def upstream_status() -> Any:
     if not API_BASE_URL:
-        return jsonify({"available": False, "error": "GATHER_API_BASE_URL is not set."})
+        return jsonify({"available": False, "error": "Upstream API is not configured."})
     base = API_BASE_URL.rstrip("/")
-    last_error: str | None = None
     for path in ("/health", "/api/health", ""):
         url = f"{base}{path}" if path else base
         try:
-            requests.get(url, headers=api_headers(), timeout=10)
+            upstream_session.get(url, headers=api_headers(), timeout=10)
             return jsonify({"available": True})
-        except requests.RequestException as exc:
-            last_error = str(exc) or "Connection failed."
-    return jsonify({"available": False, "error": last_error or "Connection failed."})
+        except Exception as exc:
+            logger.warning("Upstream health probe failed: %s — %s", url, exc)
+    return jsonify({"available": False, "error": "Upstream service is not reachable."})
 
 
 @app.route("/api/config/privacy-policy-search", methods=["GET"])
