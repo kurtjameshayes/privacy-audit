@@ -169,12 +169,12 @@ class TestBatchWorkflowStates:
 
 class TestSaveParsedStagingCheck:
     def test_returns_error_when_staging_promote_fails(self, client, monkeypatch):
+        """Promote needs staged rows from GET /documents; empty result fails finalize."""
+
         def fake_get(endpoint, params):
             return {"documents": []}, None
 
         def fake_post(endpoint, payload):
-            if endpoint == "/update_documents":
-                return None, ("update failed", 500)
             return {"ok": True}, None
 
         def fake_delete(endpoint, params):
@@ -195,7 +195,8 @@ class TestSaveParsedStagingCheck:
         )
 
         assert resp.status_code == 500
-        assert "finalize" in resp.get_json()["error"].lower()
+        err = resp.get_json()["error"].lower()
+        assert "finalize" in err or "staged" in err
 
 
 # ── single workflow state endpoint ────────────────────────────

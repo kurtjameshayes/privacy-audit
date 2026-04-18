@@ -1,7 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { normalizeApiError } from "../api/client";
 import type { DocumentRecord } from "../types/api";
 import { extractDocumentId } from "../hooks/useDocuments";
+import { useWorkflowState } from "../hooks/useWorkflowState";
+
+const PREPARE_POLL_MS = 3000;
+const PREPARE_TIMEOUT_MS = 5 * 60 * 1000;
 
 interface ParsedDocItem {
   document_id?: string;
@@ -166,9 +170,65 @@ export default function ParseModal({
   const [parseSelections, setParseSelections] = useState<
     Record<string, boolean>
   >({});
-  const [isIndexing, setIsIndexing] = useState(false);
+  const [awaitingVectorIndex, setAwaitingVectorIndex] = useState(false);
   const [indexMessage, setIndexMessage] = useState<string | null>(null);
   const [indexSuccess, setIndexSuccess] = useState<boolean | null>(null);
+  const prepareTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(
+    null
+  );
+
+  const { state: workflowState, refetch: refetchWorkflow } = useWorkflowState(
+    documentId || null,
+    mode,
+    { refetchIntervalMs: awaitingVectorIndex ? PREPARE_POLL_MS : null }
+  );
+
+  useEffect(() => {
+    setAwaitingVectorIndex(false);
+    setSaveParsedMessage(null);
+    setSaveParsedSuccess(null);
+    setIndexMessage(null);
+    setIndexSuccess(null);
+  }, [documentId, mode]);
+
+  useEffect(() => {
+    if (awaitingVectorIndex) void refetchWorkflow();
+  }, [awaitingVectorIndex, refetchWorkflow]);
+
+  useEffect(() => {
+    if (!awaitingVectorIndex) return;
+    if (workflowState?.steps?.vector_indexed?.completed) {
+      setAwaitingVectorIndex(false);
+      setIndexSuccess(true);
+      setIndexMessage(
+        "Subsections and vector index are ready. This document is prepared for compliance analysis."
+      );
+    }
+  }, [awaitingVectorIndex, workflowState]);
+
+  useEffect(() => {
+    if (!awaitingVectorIndex) {
+      if (prepareTimeoutRef.current != null) {
+        window.clearTimeout(prepareTimeoutRef.current);
+        prepareTimeoutRef.current = null;
+      }
+      return;
+    }
+    prepareTimeoutRef.current = window.setTimeout(() => {
+      prepareTimeoutRef.current = null;
+      setAwaitingVectorIndex(false);
+      setIndexMessage(
+        "Indexing may still be in progress. Check the Documents list for the Indexed badge, or use the pipeline retry if needed."
+      );
+      setIndexSuccess(null);
+    }, PREPARE_TIMEOUT_MS);
+    return () => {
+      if (prepareTimeoutRef.current != null) {
+        window.clearTimeout(prepareTimeoutRef.current);
+        prepareTimeoutRef.current = null;
+      }
+    };
+  }, [awaitingVectorIndex]);
 
   useEffect(() => {
     if (!doc || !documentId) return;
@@ -222,6 +282,9 @@ export default function ParseModal({
       setParseError(null);
       setSaveParsedMessage(null);
       setSaveParsedSuccess(null);
+      setAwaitingVectorIndex(false);
+      setIndexMessage(null);
+      setIndexSuccess(null);
       try {
         const res = await fetch("/api/parse-policy-subsections", {
           method: "POST",
@@ -254,6 +317,9 @@ export default function ParseModal({
       setParseError(null);
       setSaveParsedMessage(null);
       setSaveParsedSuccess(null);
+      setAwaitingVectorIndex(false);
+      setIndexMessage(null);
+      setIndexSuccess(null);
       try {
         const res = await fetch("/api/parse-llm", {
           method: "POST",
@@ -293,7 +359,7 @@ export default function ParseModal({
       return;
     }
     setIsSavingParsed(true);
-    setIsIndexing(true);
+    setAwaitingVectorIndex(false);
     setSaveParsedMessage(null);
     setSaveParsedSuccess(null);
     setIndexMessage(null);
@@ -333,21 +399,37 @@ export default function ParseModal({
         }
         throw new Error(errMsg);
       }
-      const data = (await res.json()) as { message?: string };
+      const data = (await res.json()) as {
+        message?: string;
+        preparation_status?: string;
+        preparation_message?: string;
+      };
       setSaveParsedMessage(
-        data.message || "Saved and prepared for compliance. Subsections and vector index created."
+        data.message ||
+          "Saved parsed sections. Subsection pipeline and vector indexing are running in the background."
       );
       setSaveParsedSuccess(true);
-      setIndexSuccess(true);
+      if (data.preparation_status === "pending") {
+        setAwaitingVectorIndex(true);
+        setIndexMessage(
+          data.preparation_message ||
+            "Indexing continues in the background. This dialog will update when vector indexing finishes."
+        );
+        setIndexSuccess(null);
+      } else {
+        setAwaitingVectorIndex(false);
+        setIndexSuccess(true);
+        setIndexMessage(null);
+      }
     } catch (err) {
       setSaveParsedMessage(
         normalizeApiError(err) || "Unable to save and prepare document."
       );
       setSaveParsedSuccess(false);
       setIndexSuccess(false);
+      setAwaitingVectorIndex(false);
     } finally {
       setIsSavingParsed(false);
-      setIsIndexing(false);
     }
   };
 
@@ -543,9 +625,10 @@ export default function ParseModal({
               setSaveParsedSuccess(null);
               setIndexMessage(null);
               setIndexSuccess(null);
+              setAwaitingVectorIndex(false);
               setParseSelections({});
             }}
-            disabled={isParsing || isSavingParsed || isIndexing}
+            disabled={isParsing || isSavingParsed}
           >
             Reset
           </button>
@@ -555,27 +638,31 @@ export default function ParseModal({
             onClick={handleSaveAndPrepare}
             disabled={
               isSavingParsed ||
-              isIndexing ||
               parseResults.length === 0 ||
               !documentId
             }
           >
-            {isSavingParsed || isIndexing
-              ? "Saving and preparing…"
-              : "Save and Prepare for Compliance"}
+            {isSavingParsed ? "Saving…" : "Save and Prepare for Compliance"}
           </button>
         </div>
         {(saveParsedMessage || indexMessage) ? (
           <div
             className={`modal-footer operation-confirmation ${
-              (indexMessage ? indexSuccess : saveParsedSuccess) === true
-                ? "operation-confirmation--success"
-                : (indexMessage ? indexSuccess : saveParsedSuccess) === false
-                  ? "operation-confirmation--error"
+              saveParsedSuccess === false
+                ? "operation-confirmation--error"
+                : saveParsedSuccess === true && indexSuccess === true
+                  ? "operation-confirmation--success"
                   : ""
             }`}
           >
-            {indexMessage ?? saveParsedMessage}
+            {saveParsedMessage ? (
+              <div className="parse-footer-line">{saveParsedMessage}</div>
+            ) : null}
+            {indexMessage ? (
+              <div className={saveParsedMessage ? "parse-footer-line parse-footer-line--secondary" : "parse-footer-line"}>
+                {indexMessage}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

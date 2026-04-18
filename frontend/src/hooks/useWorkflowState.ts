@@ -2,9 +2,15 @@ import { useEffect, useState, useCallback } from "react";
 import { apiGet } from "../api/client";
 import type { WorkflowState } from "../types/api";
 
+export type UseWorkflowStateOptions = {
+  /** When set and positive, refetch workflow state on this interval (ms). */
+  refetchIntervalMs?: number | null;
+};
+
 export function useWorkflowState(
   documentId: string | null,
-  documentType: "policy" | "statute" = "policy"
+  documentType: "policy" | "statute" = "policy",
+  options?: UseWorkflowStateOptions
 ) {
   const [state, setState] = useState<WorkflowState | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,6 +41,15 @@ export function useWorkflowState(
   useEffect(() => {
     void fetchState();
   }, [fetchState]);
+
+  const intervalMs = options?.refetchIntervalMs;
+  useEffect(() => {
+    if (!documentId || intervalMs == null || intervalMs <= 0) return;
+    const id = window.setInterval(() => {
+      void fetchState();
+    }, intervalMs);
+    return () => clearInterval(id);
+  }, [documentId, intervalMs, fetchState]);
 
   return { state, loading, error, refetch: fetchState };
 }

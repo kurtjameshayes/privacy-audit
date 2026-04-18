@@ -1133,6 +1133,19 @@ input[type="datetime-local"]:focus {
   justify-content: flex-end;
 }
 
+.parse-footer-line {
+  margin: 0 0 8px;
+}
+
+.parse-footer-line:last-child {
+  margin-bottom: 0;
+}
+
+.parse-footer-line--secondary {
+  font-size: 0.92em;
+  opacity: 0.92;
+}
+
 .vector-panel {
   border-top: 1px solid rgba(12, 18, 29, 0.1);
   padding: 16px 24px 20px;

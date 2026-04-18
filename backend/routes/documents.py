@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from typing import Any
 
@@ -101,6 +102,38 @@ def _run_subsection_pipeline(
         return msg, status
 
     return None, None
+
+
+def _finish_save_parsed_prepare(
+    document_id: str,
+    document_type: str,
+    database_name: str,
+    wf_coll: str,
+) -> None:
+    """Run subsection pipeline and mark vector_indexed; invoked from a background thread."""
+    try:
+        err_msg, err_status = _run_subsection_pipeline(document_id, document_type, database_name)
+        if err_msg is not None:
+            logger.error(
+                "save_parsed prepare (background): pipeline failed doc_id=%s: %s (status=%s)",
+                document_id,
+                err_msg,
+                err_status,
+            )
+            return
+        upsert_workflow_state(
+            forward_get,
+            forward_post,
+            forward_delete,
+            database_name,
+            document_id,
+            document_type,
+            "vector_indexed",
+            wf_coll,
+        )
+        logger.info("save_parsed prepare (background): completed doc_id=%s", document_id)
+    except Exception:
+        logger.exception("save_parsed prepare (background): unexpected error doc_id=%s", document_id)
 
 
 @bp.route("/api/documents", methods=["POST"])
@@ -205,6 +238,89 @@ def parse_policy_subsections() -> Any:
         message, status = error
         return jsonify({"error": message}), status
     return jsonify(data)
+
+
+def _rewrite_promote_staged_chunks(
+    database_name: str,
+    collection_name: str,
+    staging_id: str,
+    document_id: str,
+    expected_count: int,
+) -> tuple[str | None, int | None]:
+    """Promote staged chunk rows from staging_id to document_id.
+
+    The upstream Web Gather API exposes GET/DELETE /documents and append writes only—no
+    bulk update-by-query. This loads staged rows, deletes them by staging_id, and
+    re-appends the same payloads with the real document_id.
+    """
+    staging_docs_res, get_err = forward_get(
+        "/documents",
+        {
+            "database_name": database_name,
+            "collection_name": collection_name,
+            "query": json.dumps({"document_id": staging_id}),
+        },
+    )
+    if get_err:
+        return get_err[0], get_err[1]
+
+    docs: list[dict[str, Any]] = []
+    if isinstance(staging_docs_res, dict):
+        raw = staging_docs_res.get(
+            "documents",
+            staging_docs_res.get("data", staging_docs_res.get("results", [])),
+        )
+        if isinstance(raw, list):
+            docs = [d for d in raw if isinstance(d, dict)]
+
+    if not docs:
+        return (
+            "Finalize failed: staged chunks were not found (upstream may not support bulk update).",
+            500,
+        )
+
+    if expected_count and len(docs) != expected_count:
+        logger.warning(
+            "save_parsed: rewrite promote got %d docs, expected %d (staging …%s)",
+            len(docs),
+            expected_count,
+            staging_id[-12:] if len(staging_id) >= 12 else staging_id,
+        )
+
+    _, del_err = forward_delete(
+        "/documents",
+        {
+            "database_name": database_name,
+            "collection_name": collection_name,
+            "query": json.dumps({"document_id": staging_id}),
+        },
+    )
+    if del_err:
+        return del_err[0], del_err[1]
+
+    def _chunk_sort_key(d: dict[str, Any]) -> int:
+        try:
+            return int(d.get("chunk_index", 0))
+        except (TypeError, ValueError):
+            return 0
+
+    for row in sorted(docs, key=_chunk_sort_key):
+        doc = dict(row)
+        doc.pop("_id", None)
+        doc["document_id"] = document_id
+        _, werr = forward_post(
+            "/write_to_collection",
+            {
+                "database_name": database_name,
+                "collection_name": collection_name,
+                "document": doc,
+                "mode": "append",
+            },
+        )
+        if werr:
+            return werr[0], werr[1]
+
+    return None, None
 
 
 @bp.route("/api/save-parsed", methods=["POST"])
@@ -316,19 +432,21 @@ def save_parsed_document() -> Any:
         if isinstance(rec, dict) and rec.get("document_id") == staging_id:
             rec["document_id"] = document_id
 
-    _, update_err = forward_post(
-        "/update_documents",
-        {
-            "database_name": database_name,
-            "collection_name": collection_name,
-            "query": {"document_id": staging_id},
-            "update": {"$set": {"document_id": document_id}},
-        },
+    rw_msg, rw_status = _rewrite_promote_staged_chunks(
+        database_name,
+        collection_name,
+        staging_id,
+        document_id,
+        len(staged_records),
     )
-    if update_err:
-        update_msg, update_status = update_err
-        logger.error("save_parsed: staging promote failed for doc_id=%s: %s", document_id, update_msg)
-        return jsonify({"error": f"Failed to finalize parsed chunks: {update_msg}"}), update_status or 500
+    if rw_msg is not None:
+        logger.error("save_parsed: staging promote failed for doc_id=%s: %s", document_id, rw_msg)
+        return jsonify({"error": f"Failed to finalize parsed chunks: {rw_msg}"}), rw_status or 500
+
+    logger.info(
+        "save_parsed: promoted %d chunks via fetch/delete/rewrite",
+        len(staged_records),
+    )
 
     saved_records = staged_records
 
@@ -345,24 +463,18 @@ def save_parsed_document() -> Any:
         wf_coll,
     )
 
-    err_msg, err_status = _run_subsection_pipeline(document_id, doc_type, database_name)
-    if err_msg is not None:
-        return jsonify({"error": err_msg}), err_status or 500
+    threading.Thread(
+        target=_finish_save_parsed_prepare,
+        args=(document_id, doc_type, database_name, wf_coll),
+        daemon=True,
+    ).start()
 
-    upsert_workflow_state(
-        forward_get,
-        forward_post,
-        forward_delete,
-        database_name,
-        document_id,
-        doc_type,
-        "vector_indexed",
-        wf_coll,
-    )
-
+    n = len(saved_records)
     return jsonify({
-        "message": f"Saved {len(saved_records)} parsed sections.",
+        "message": f"Saved {n} parsed sections. Subsection pipeline and vector indexing are running in the background.",
         "data": saved_records,
+        "preparation_status": "pending",
+        "preparation_message": "Indexing and vector setup continue in the background. You can leave this dialog; refresh the Documents list to see the Indexed badge when finished.",
     })
 
 
